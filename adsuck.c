@@ -176,11 +176,6 @@ main(int argc, char *argv[])
 	struct hostnode		hostn, *n;
 	ldns_rr			*query_rr;
 	ldns_resolver		*res;
-	ldns_rdf		*qname;
-	ldns_pkt		*respkt;
-	ldns_rr_type		type;
-	ldns_rr_class		clas;
-	u_int16_t		qflags = LDNS_RD;
 	char			*resolv_conf = NULL;
 
 	while ((c = getopt(argc, argv, "df:v")) != -1) {
@@ -312,6 +307,11 @@ main(int argc, char *argv[])
 		} else {
 			uint8_t		*outbuf;
 			size_t		answer_size;
+			u_int16_t	qflags = LDNS_RD;
+			ldns_rdf	*qname;
+			ldns_pkt	*respkt;
+			ldns_rr_type	type;
+			ldns_rr_class	clas;
 
 			printf("resolving: %s\n", hostn.hostname);
 			qname = ldns_dname_new_frm_str(hostn.hostname);
@@ -334,6 +334,7 @@ main(int argc, char *argv[])
 
 			ldns_pkt_free(respkt);
 			LDNS_FREE(outbuf);
+			ldns_rdf_free(qname);
 
 			printf("sent\n");
 		}
