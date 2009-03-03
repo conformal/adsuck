@@ -317,9 +317,6 @@ main(int argc, char *argv[])
 			qname = ldns_dname_new_frm_str(hostn.hostname);
 			if (!qname)
 				errx(1, "can't make qname\n"); /* XXX do something less drstic */
-			type = LDNS_RR_TYPE_A;
-			type = LDNS_RR_TYPE_PTR;
-			clas = LDNS_RR_CLASS_IN;
 			type = ldns_rr_get_type(query_rr);
 			clas = ldns_rr_get_class(query_rr);
 			respkt = ldns_resolver_query(res, qname, type, clas, qflags);
