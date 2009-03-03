@@ -1,3 +1,6 @@
+/* $adsuck$ */
+/* copyright 2009 Marco Peereboom, all rights reserved */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
