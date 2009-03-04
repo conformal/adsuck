@@ -42,6 +42,7 @@ socklen_t		plen = (socklen_t) sizeof(paddr);
 ldns_resolver		*res;
 char			*resolv_conf;
 volatile sig_atomic_t   newresolv;
+volatile sig_atomic_t   stop;
 
 extern char		*__progname;
 
@@ -58,6 +59,12 @@ rb_strcmp(struct hostnode *d1, struct hostnode *d2)
 
 RB_HEAD(hosttree, hostnode) hosthead = RB_INITIALIZER(&hosthead);
 RB_GENERATE(hosttree, hostnode, hostentry, rb_strcmp)
+
+void
+sigterm(int sig)
+{
+	stop = 1;
+}
 
 void
 sighup(int sig)
@@ -346,8 +353,7 @@ setupresolver(void)
 		fatalx(es);
 	}
 
-	if (verbose)
-		log_info("%s %s", action, resolv_conf);
+	log_info("%s %s", action, resolv_conf);
 
 	newresolv = 0;
 }
@@ -417,8 +423,6 @@ main(int argc, char *argv[])
 	argc -= optind;
 	argv += optind;
 
-	log_info("welcome to %s[%d]", __progname, getpid());
-
 	/* make sure we have right permissions */
 	if (geteuid())
 		errx(1, "need root privileges");
@@ -440,32 +444,6 @@ main(int argc, char *argv[])
 	if (udp_bind(sock, port, listen_addr))
 		err(1, "can't udp bind");
 
-	/* chroot */
-	if (cdir == NULL)
-		cdir = pw->pw_dir;
-	if (stat(cdir, &stb) == -1)
-		err(1, "stat");
-	if (stb.st_uid != 0 || (stb.st_mode & (S_IWGRP | S_IWOTH)) != 0)
-		errx(1, "bad privsep dir permissions");
-	if (chroot(cdir) == -1)
-		err(1, "chroot");
-	if (chdir("/") == -1)
-		err(1, "chdir(\"/\")");
-
-	/* drop privs */
-	if (setgroups(1, &pw->pw_gid) ||
-	    setresgid(pw->pw_gid, pw->pw_gid, pw->pw_gid) ||
-	    setresuid(pw->pw_uid, pw->pw_uid, pw->pw_uid))
-		err(1, "can't drop privileges");
-
-	/* signaling */
-	sa.sa_handler = sighup;
-	sigemptyset(&sa.sa_mask);
-	sa.sa_flags = 0;
-	if (sigaction(SIGHUP, &sa, NULL) == -1)
-		err(1, "could not install HUP handler");
-	setupresolver();
-
 	/* daemonize */
 	if (!foreground) {
 		if (debug)
@@ -475,7 +453,41 @@ main(int argc, char *argv[])
 			fatal("daemon");
 	}
 
-	for (;;) {
+	log_info("start");
+
+	/* chroot */
+	if (cdir == NULL)
+		cdir = pw->pw_dir;
+	if (stat(cdir, &stb) == -1)
+		fatal("stat");
+	if (stb.st_uid != 0 || (stb.st_mode & (S_IWGRP | S_IWOTH)) != 0)
+		fatalx("bad privsep dir permissions");
+	if (chroot(cdir) == -1)
+		fatal("chroot");
+	if (chdir("/") == -1)
+		fatal("chdir(\"/\")");
+
+	/* drop privs */
+	if (setgroups(1, &pw->pw_gid) ||
+	    setresgid(pw->pw_gid, pw->pw_gid, pw->pw_gid) ||
+	    setresuid(pw->pw_uid, pw->pw_uid, pw->pw_uid))
+		fatal("can't drop privileges");
+
+	/* signaling */
+	sa.sa_handler = sigterm;
+	sigemptyset(&sa.sa_mask);
+	sa.sa_flags = 0;
+	if (sigaction(SIGTERM, &sa, NULL) == -1)
+		fatal("could not install TERM handler");
+
+	sa.sa_handler = sighup;
+	sigemptyset(&sa.sa_mask);
+	sa.sa_flags = 0;
+	if (sigaction(SIGHUP, &sa, NULL) == -1)
+		fatal("could not install HUP handler");
+	setupresolver();
+
+	while (!stop) {
 		nb = recvfrom(sock, inbuf, INBUF_SIZE, 0, &paddr, &plen);
 		if (nb == -1) {
 			if (errno == EINTR || errno == EAGAIN) {
@@ -514,6 +526,8 @@ main(int argc, char *argv[])
 		free(hostn.hostname);
 		ldns_pkt_free(query_pkt);
 	}
+
+	log_info("exiting");
 
 	return (0);
 }
