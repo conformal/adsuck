@@ -1,5 +1,5 @@
+/* $adsuck$ */
 /*	$OpenBSD: log.c,v 1.8 2007/08/22 21:04:30 ckuethe Exp $ */
-
 /*
  * Copyright (c) 2003, 2004 Henning Brauer <henning@openbsd.org>
  *
