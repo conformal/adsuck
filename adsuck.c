@@ -8,6 +8,7 @@
 #include <err.h>
 #include <unistd.h>
 #include <signal.h>
+#include <pwd.h>
 
 #include <netinet/in.h>
 
@@ -17,12 +18,14 @@
 #include <sys/tree.h>
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 
 #include <ldns/ldns.h>
 
 #define MAXLINE		(128)
 #define INBUF_SIZE	(4096)
 #define LOCALIP		"127.0.0.1"
+#define ADSUCK_USER	"_adsuck"
 
 int			entries;
 int			verbose;
@@ -125,14 +128,6 @@ udp_bind(int sock, u_int16_t port, char *my_address)
 	addr.sin_port = (in_port_t) htons((uint16_t)port);
 	addr.sin_addr.s_addr = maddr;
 	return (bind(sock, (struct sockaddr *)&addr, (socklen_t) sizeof(addr)));
-}
-
-void
-usage(void)
-{
-	fprintf(stderr, "%s [-dv][-f resolv.conf][-p port][-l addr]"
-	    "[hostsfile ...]\n", __progname);
-	exit(0);
 }
 
 char *
@@ -342,6 +337,14 @@ setupresolver(void)
 	newresolv = 0;
 }
 
+void
+usage(void)
+{
+	fprintf(stderr, "%s [-dv][-D chroot][-f resolv.conf][-l addr][-p port]"
+	    "[-u user][hostsfile ...]\n", __progname);
+	exit(0);
+}
+
 int
 main(int argc, char *argv[])
 {
@@ -355,9 +358,17 @@ main(int argc, char *argv[])
 	ldns_rr			*query_rr;
 	char			*listen_addr = NULL;
 	u_int16_t		port = 53;
+	struct sigaction	sa;
+	struct passwd		*pw;
+	struct stat		stb;
+	char			*user = ADSUCK_USER;;
+	char			*cdir = NULL;
 
-	while ((c = getopt(argc, argv, "df:l:p:v")) != -1) {
+	while ((c = getopt(argc, argv, "D:df:l:u:p:v")) != -1) {
 		switch (c) {
+		case 'D':
+			cdir = optarg;
+			break;
 		case 'd':
 			debug = 1;
 			break;
@@ -369,6 +380,9 @@ main(int argc, char *argv[])
 			break;
 		case 'p':
 			port = atoi(optarg);
+			break;
+		case 'u':
+			user = optarg;
 			break;
 		case 'v':
 			verbose = 1;
@@ -384,6 +398,13 @@ main(int argc, char *argv[])
 
 	fprintf(stderr, "welcome to %s[%d]\n", __progname, getpid());
 
+	/* make sure we have right permissions */
+	if (geteuid())
+		errx(1, "need root privileges");
+
+	if ((pw = getpwnam(user)) == NULL)
+		errx(1, "unknown user %s", user);
+
 	while (argc) {
 		addhosts(argv[0]);
 		argc--;
@@ -398,22 +419,43 @@ main(int argc, char *argv[])
 	if (udp_bind(sock, port, listen_addr))
 		err(1, "can't udp bind");
 
-	if (signal(SIGHUP, sighup) == SIG_ERR)
+	/* chroot */
+	if (cdir == NULL)
+		cdir = pw->pw_dir;
+	if (stat(cdir, &stb) == -1)
+		err(1, "stat");
+	if (stb.st_uid != 0 || (stb.st_mode & (S_IWGRP | S_IWOTH)) != 0)
+		errx(1, "bad privsep dir permissions");
+	if (chroot(cdir) == -1)
+		err(1, "chroot");
+	if (chdir("/") == -1)
+		err(1, "chdir(\"/\")");
+
+	/* drop privs */
+	if (setgroups(1, &pw->pw_gid) ||
+	    setresgid(pw->pw_gid, pw->pw_gid, pw->pw_gid) ||
+	    setresuid(pw->pw_uid, pw->pw_uid, pw->pw_uid))
+		err(1, "can't drop privileges");
+
+
+	sa.sa_handler = sighup;
+	sigemptyset(&sa.sa_mask);
+	sa.sa_flags = 0;
+	if (sigaction(SIGHUP, &sa, NULL) == -1)
 		err(1, "could not install HUP handler");
+
 	setupresolver();
 
 	for (;;) {
 		nb = recvfrom(sock, inbuf, INBUF_SIZE, 0, &paddr, &plen);
 		if (nb == -1) {
-			if (errno == EINTR || errno == EAGAIN)
+			if (errno == EINTR || errno == EAGAIN) {
+				if (newresolv)
+					setupresolver();
 				continue;
-			else
+			} else
 				err(1, "recvfrom");
 		}
-
-		/* SIGHUP doesn't EINTR recvfrom so do this here */
-		if (newresolv)
-			setupresolver();
 
 		status = ldns_wire2pkt(&query_pkt, inbuf, (size_t)nb);
 		if (status != LDNS_STATUS_OK) {
@@ -428,6 +470,7 @@ main(int argc, char *argv[])
 
 		hostn.hostname = hostnamefrompkt(query_pkt, &query_rr);
 		id = ldns_pkt_id(query_pkt);
+		/* XXX since we are returning NXdomain fakeout searchdomain requests as well */
 		if ((n = RB_FIND(hosttree, &hosthead, &hostn)) != NULL)
 			spoofquery(hostn.hostname, query_rr, id);
 		else
