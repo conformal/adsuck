@@ -510,13 +510,6 @@ main(int argc, char *argv[])
 			}
 
 		hostn.hostname = hostnamefrompkt(query_pkt, &query_rr);
-#if 0
-		/* XXX make sure we dont search local domains for spoofed stuff */
-		fprintf(stderr, "%s\n", hostn.hostname);
-		char *sd = NULL;
-		if ((sd = strstr(hostn.hostname, ".peereboom.us")))
-			sd[0] = '\0';
-#endif
 		id = ldns_pkt_id(query_pkt);
 		if ((n = RB_FIND(hosttree, &hosthead, &hostn)) != NULL)
 			spoofquery(hostn.hostname, query_rr, id);
