@@ -170,8 +170,6 @@ int
 spoofquery(char *hostname, ldns_rr *query_rr, u_int16_t id)
 {
 	ldns_status		status;
-	ldns_rr			*myrr = NULL, *myaurr = NULL;
-	ldns_rdf		*prev = NULL;
 	ldns_rr_list		*answer_an = NULL;
 	ldns_rr_list		*answer_ns = NULL;
 	ldns_rr_list		*answer_ad = NULL;
@@ -179,48 +177,38 @@ spoofquery(char *hostname, ldns_rr *query_rr, u_int16_t id)
 	ldns_pkt		*answer_pkt = NULL;
 	size_t			answer_size;
 	uint8_t			*outbuf = NULL;
-	char			buf[128];
 	int			rv = 1;
 
 	/* answer section */
 	answer_an = ldns_rr_list_new();
-	snprintf(buf, sizeof buf, "%s.\t%d\tIN\tA\t127.0.0.1",
-	    hostname, 259200);
-	status = ldns_rr_new_frm_str(&myrr, buf, 0, NULL, &prev);
-	if (status != LDNS_STATUS_OK) {
-		fprintf(stderr, "can't create answer section: %s\n",
-		    ldns_get_errorstr_by_id(status));
+	if (answer_an == NULL)
 		goto unwind;
-	}
-	ldns_rr_list_push_rr(answer_an, myrr);
-	ldns_rdf_deep_free(prev);
-	prev = NULL;
 
 	/* authority section */
 	answer_ns = ldns_rr_list_new();
-	snprintf(buf, sizeof buf, "%s.\t%d\tIN\tNS\t127.0.0.1.",
-	    hostname, 259200);
-	status = ldns_rr_new_frm_str(&myaurr, buf, 0, NULL, &prev);
-	if (status != LDNS_STATUS_OK) {
-		fprintf(stderr, "can't create authority section: %s\n",
-		    ldns_get_errorstr_by_id(status));
+	if (answer_ns == NULL)
 		goto unwind;
-	}
-	ldns_rr_list_push_rr(answer_ns, myaurr);
-	ldns_rdf_deep_free(prev);
-	prev = NULL;
 
 	/* question section */
 	answer_qr = ldns_rr_list_new();
+	if (answer_qr == NULL)
+		goto unwind;
 	ldns_rr_list_push_rr(answer_qr, ldns_rr_clone(query_rr));
+
+	/* additional section */
+	answer_ad = ldns_rr_list_new();
+	if (answer_ad == NULL)
+		goto unwind;
 
 	/* actual packet */
 	answer_pkt = ldns_pkt_new();
-	answer_ad = ldns_rr_list_new();
+	if (answer_pkt == NULL)
+		goto unwind;
 	
 	ldns_pkt_set_qr(answer_pkt, 1);
 	ldns_pkt_set_aa(answer_pkt, 1);
 	ldns_pkt_set_id(answer_pkt, id);
+	ldns_pkt_set_rcode(answer_pkt, LDNS_RCODE_NXDOMAIN);
 
 	ldns_pkt_push_rr_list(answer_pkt, LDNS_SECTION_QUESTION, answer_qr);
 	ldns_pkt_push_rr_list(answer_pkt, LDNS_SECTION_ANSWER, answer_an);
