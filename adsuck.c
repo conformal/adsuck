@@ -102,12 +102,11 @@ addhosts(char *filename)
 }
 
 int
-udp_bind(int sock, int port, char *my_address)
+udp_bind(int sock, u_int16_t port, char *my_address)
 {
 	struct sockaddr_in		addr;
 	in_addr_t			maddr = INADDR_ANY;
 
-	/* XXX this doesn't work */
 	if (my_address)
 		if (inet_pton(AF_INET6, my_address, &maddr) < 1)
 			if (inet_pton(AF_INET, my_address, &maddr) < 1)
@@ -122,7 +121,8 @@ udp_bind(int sock, int port, char *my_address)
 void
 usage(void)
 {
-	fprintf(stderr, "%s [-dv][hostsfile ...]\n", __progname);
+	fprintf(stderr, "%s [-dv][-f resolv.conf][-p port][-l addr]"
+	    "[hostsfile ...]\n", __progname);
 	exit(0);
 }
 
@@ -320,15 +320,22 @@ main(int argc, char *argv[])
 	ldns_pkt		*query_pkt;
 	struct hostnode		hostn, *n;
 	ldns_rr			*query_rr;
-	char			*resolv_conf = NULL;
+	char			*resolv_conf = NULL, *listen_addr = NULL;
+	u_int16_t		port = 53;
 
-	while ((c = getopt(argc, argv, "df:v")) != -1) {
+	while ((c = getopt(argc, argv, "df:l:p:v")) != -1) {
 		switch (c) {
 		case 'd':
 			debug = 1;
 			break;
 		case 'f':
 			resolv_conf = optarg;
+			break;
+		case 'l':
+			listen_addr = optarg;
+			break;
+		case 'p':
+			port = atoi(optarg);
 			break;
 		case 'v':
 			verbose = 1;
@@ -353,8 +360,7 @@ main(int argc, char *argv[])
 	sock =  socket(AF_INET, SOCK_DGRAM, 0);
 	if (sock == -1)
 		err(1, "can't open socket");
-	//if (udp_bind(sock, 53, "localhost"))
-	if (udp_bind(sock, 53, NULL))
+	if (udp_bind(sock, port, listen_addr))
 		err(1, "can't udp bind");
 
 	/* setup resolver */
