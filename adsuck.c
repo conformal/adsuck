@@ -7,6 +7,7 @@
 #include <ctype.h>
 #include <err.h>
 #include <unistd.h>
+#include <signal.h>
 
 #include <netinet/in.h>
 
@@ -34,6 +35,8 @@ socklen_t		plen = (socklen_t) sizeof(paddr);
 
 /* resolver */
 ldns_resolver		*res;
+char			*resolv_conf;
+volatile sig_atomic_t   newresolv;
 
 extern char		*__progname;
 
@@ -50,6 +53,12 @@ rb_strcmp(struct hostnode *d1, struct hostnode *d2)
 
 RB_HEAD(hosttree, hostnode) hosthead = RB_INITIALIZER(&hosthead);
 RB_GENERATE(hosttree, hostnode, hostentry, rb_strcmp)
+
+void
+sighup(int sig)
+{
+	newresolv = 1;
+}
 
 void
 addhosts(char *filename)
@@ -96,7 +105,7 @@ addhosts(char *filename)
 		newentry++;
 	}
 	if (verbose)
-		printf("added entries: %d\n", newentry);
+		fprintf(stderr, "added entries: %d\n", newentry);
 	entries += newentry;
 	fclose(f);
 }
@@ -309,6 +318,30 @@ unwind:
 	return (rv);
 }
 
+void
+setupresolver(void)
+{
+	ldns_status		status;
+	char			*action = "using";
+
+	if (res) {
+		ldns_resolver_free(res);
+		res = NULL;
+		action = "rereading";
+	}
+
+	status = ldns_resolver_new_frm_file(&res, resolv_conf);
+	if (status != LDNS_STATUS_OK) {
+		printf("bad resolv.conf file: %s\n", ldns_get_errorstr_by_id(status));
+		exit(1);
+	}
+
+	if (verbose)
+		fprintf(stderr, "%s %s\n", action, resolv_conf);
+
+	newresolv = 0;
+}
+
 int
 main(int argc, char *argv[])
 {
@@ -320,7 +353,7 @@ main(int argc, char *argv[])
 	ldns_pkt		*query_pkt;
 	struct hostnode		hostn, *n;
 	ldns_rr			*query_rr;
-	char			*resolv_conf = NULL, *listen_addr = NULL;
+	char			*listen_addr = NULL;
 	u_int16_t		port = 53;
 
 	while ((c = getopt(argc, argv, "df:l:p:v")) != -1) {
@@ -349,13 +382,15 @@ main(int argc, char *argv[])
 	argc -= optind;
 	argv += optind;
 
+	fprintf(stderr, "welcome to %s[%d]\n", __progname, getpid());
+
 	while (argc) {
 		addhosts(argv[0]);
 		argc--;
 		argv++;
 	}
 	if (verbose)
-		printf("total entries: %d\n", entries);
+		fprintf(stderr, "total entries: %d\n", entries);
 
 	sock =  socket(AF_INET, SOCK_DGRAM, 0);
 	if (sock == -1)
@@ -363,12 +398,9 @@ main(int argc, char *argv[])
 	if (udp_bind(sock, port, listen_addr))
 		err(1, "can't udp bind");
 
-	/* setup resolver */
-	status = ldns_resolver_new_frm_file(&res, resolv_conf);
-	if (status != LDNS_STATUS_OK) {
-		printf("bad resolv.conf file: %s\n", ldns_get_errorstr_by_id(status));
-		exit(1);
-	}
+	if (signal(SIGHUP, sighup) == SIG_ERR)
+		err(1, "could not install HUP handler");
+	setupresolver();
 
 	for (;;) {
 		nb = recvfrom(sock, inbuf, INBUF_SIZE, 0, &paddr, &plen);
@@ -378,6 +410,10 @@ main(int argc, char *argv[])
 			else
 				err(1, "recvfrom");
 		}
+
+		/* SIGHUP doesn't EINTR recvfrom so do this here */
+		if (newresolv)
+			setupresolver();
 
 		status = ldns_wire2pkt(&query_pkt, inbuf, (size_t)nb);
 		if (status != LDNS_STATUS_OK) {
