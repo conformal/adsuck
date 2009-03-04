@@ -17,10 +17,11 @@
 #include <sys/errno.h>
 #include <sys/tree.h>
 #include <sys/types.h>
-#include <sys/socket.h>
 #include <sys/stat.h>
 
 #include <ldns/ldns.h>
+
+#include "adsuck.h"
 
 #define MAXLINE		(128)
 #define INBUF_SIZE	(4096)
@@ -30,6 +31,7 @@
 int			entries;
 int			verbose;
 int			debug;
+int			debugsyslog;
 
 /* socket */
 int			sock;
@@ -64,6 +66,18 @@ sighup(int sig)
 }
 
 void
+logpacket(ldns_pkt *pkt)
+{
+	char			*str = ldns_pkt2str(pkt);
+
+	if (str)
+		log_debug("%s", str);
+	else
+		log_warnx("could not convert packet to string");
+	LDNS_FREE(str);
+}
+
+void
 addhosts(char *filename)
 {
 	FILE			*f;
@@ -74,7 +88,7 @@ addhosts(char *filename)
 
 	f = fopen(filename, "r");
 	if (f == NULL)
-		err(1, "can't open file %s", filename);
+		fatal("can't open hosts file");
 
 	while (!feof(f)) {
 		if (fgets(l, sizeof l, f) == NULL && feof(f))
@@ -100,7 +114,7 @@ addhosts(char *filename)
 		len = strlen(p);
 		hostn = malloc(sizeof(struct hostnode) + len + 1);
 		if (hostn == NULL)
-			err(1, "not enough memory");
+			fatal("not enough memory");
 		hostn->hostname = (char *)(hostn + 1);
 		strlcpy(hostn->hostname, p, len + 1);
 		if (RB_INSERT(hosttree, &hosthead, hostn))
@@ -108,7 +122,7 @@ addhosts(char *filename)
 		newentry++;
 	}
 	if (verbose)
-		fprintf(stderr, "added entries: %d\n", newentry);
+		log_info("added entries: %d", newentry);
 	entries += newentry;
 	fclose(f);
 }
@@ -221,20 +235,20 @@ spoofquery(char *hostname, ldns_rr *query_rr, u_int16_t id)
 
 	status = ldns_pkt2wire(&outbuf, answer_pkt, &answer_size);
 	if (status != LDNS_STATUS_OK)
-		fprintf(stderr, "can't create answer: %s\n",
+		log_warnx("can't create answer: %s",
 		    ldns_get_errorstr_by_id(status));
 	else {
 		if (debug) {
-			fprintf(stderr, "spoofquery response:\n");
-			ldns_pkt_print(stderr, answer_pkt);
+			log_debug("spoofquery response:");
+			logpacket(answer_pkt);
 		}
 
 		if (sendto(sock, outbuf, answer_size, 0, &paddr, plen) == -1)
-			warn("spoofquery sendto");
+			log_warn("spoofquery sendto");
 		else {
 			rv = 0;
 			if (verbose)
-				fprintf(stderr, "spoofquery: spoofing %s\n",
+				log_info("spoofquery: spoofing %s",
 				    hostname);
 		}
 	}
@@ -271,33 +285,33 @@ forwardquery(char *hostname, ldns_rr *query_rr, u_int16_t id)
 
 	qname = ldns_dname_new_frm_str(hostname);
 	if (!qname) {
-		fprintf(stderr, "forwardquery: can't make qname\n");
+		log_warnx("forwardquery: can't make qname");
 		goto unwind;
 	}
 	type = ldns_rr_get_type(query_rr);
 	clas = ldns_rr_get_class(query_rr);
 	respkt = ldns_resolver_query(res, qname, type, clas, qflags);
 	if (respkt == NULL) {
-		fprintf(stderr, "forwardquery: no respkt\n");
+		log_warnx("forwardquery: no respkt");
 		goto unwind;
 	}
 	if (debug) {
-		fprintf(stderr, "forwardquery response:\n");
-		ldns_pkt_print(stderr, respkt);
+		log_info("forwardquery response:");
+		logpacket(respkt);
 	}
 
 	ldns_pkt_set_id(respkt, id);
 	status = ldns_pkt2wire(&outbuf, respkt, &answer_size);
 	if (status != LDNS_STATUS_OK)
-		fprintf(stderr, "can't create answer: %s\n",
+		log_warnx("can't create answer: %s",
 		    ldns_get_errorstr_by_id(status));
 	else {
 		if (sendto(sock, outbuf, answer_size, 0, &paddr, plen) == -1)
-			warn("forwardquery sendto");
+			log_warn("forwardquery sendto");
 		else {
 			rv = 0;
 			if (verbose)
-				fprintf(stderr, "forwardquery: resolved %s\n",
+				log_info("forwardquery: resolved %s",
 				    hostname);
 		}
 	}
@@ -317,7 +331,7 @@ void
 setupresolver(void)
 {
 	ldns_status		status;
-	char			*action = "using";
+	char			*action = "using", *es;
 
 	if (res) {
 		ldns_resolver_free(res);
@@ -327,12 +341,13 @@ setupresolver(void)
 
 	status = ldns_resolver_new_frm_file(&res, resolv_conf);
 	if (status != LDNS_STATUS_OK) {
-		printf("bad resolv.conf file: %s\n", ldns_get_errorstr_by_id(status));
-		exit(1);
+		asprintf(&es, "bad resolv.conf file: %s",
+			ldns_get_errorstr_by_id(status));
+		fatalx(es);
 	}
 
 	if (verbose)
-		fprintf(stderr, "%s %s\n", action, resolv_conf);
+		log_info("%s %s", action, resolv_conf);
 
 	newresolv = 0;
 }
@@ -340,7 +355,7 @@ setupresolver(void)
 void
 usage(void)
 {
-	fprintf(stderr, "%s [-dv][-D chroot][-f resolv.conf][-l addr][-p port]"
+	fprintf(stderr, "%s [-Ddv][-c chroot][-f resolv.conf][-l addr][-p port]"
 	    "[-u user][hostsfile ...]\n", __progname);
 	exit(0);
 }
@@ -363,10 +378,16 @@ main(int argc, char *argv[])
 	struct stat		stb;
 	char			*user = ADSUCK_USER;;
 	char			*cdir = NULL;
+	int			foreground = 0;
 
-	while ((c = getopt(argc, argv, "D:df:l:u:p:v")) != -1) {
+	log_init(1);		/* log to stderr until daemonized */
+
+	while ((c = getopt(argc, argv, "Dc:df:l:u:p:v")) != -1) {
 		switch (c) {
 		case 'D':
+			foreground = 1;
+			break;
+		case 'c':
 			cdir = optarg;
 			break;
 		case 'd':
@@ -396,7 +417,7 @@ main(int argc, char *argv[])
 	argc -= optind;
 	argv += optind;
 
-	fprintf(stderr, "welcome to %s[%d]\n", __progname, getpid());
+	log_info("welcome to %s[%d]", __progname, getpid());
 
 	/* make sure we have right permissions */
 	if (geteuid())
@@ -411,7 +432,7 @@ main(int argc, char *argv[])
 		argv++;
 	}
 	if (verbose)
-		fprintf(stderr, "total entries: %d\n", entries);
+		log_info("total entries: %d", entries);
 
 	sock =  socket(AF_INET, SOCK_DGRAM, 0);
 	if (sock == -1)
@@ -437,14 +458,22 @@ main(int argc, char *argv[])
 	    setresuid(pw->pw_uid, pw->pw_uid, pw->pw_uid))
 		err(1, "can't drop privileges");
 
-
+	/* signaling */
 	sa.sa_handler = sighup;
 	sigemptyset(&sa.sa_mask);
 	sa.sa_flags = 0;
 	if (sigaction(SIGHUP, &sa, NULL) == -1)
 		err(1, "could not install HUP handler");
-
 	setupresolver();
+
+	/* daemonize */
+	if (!foreground) {
+		if (debug)
+			debugsyslog = 1;
+		log_init(0);
+		if (daemon(1, 0))
+			fatal("daemon");
+	}
 
 	for (;;) {
 		nb = recvfrom(sock, inbuf, INBUF_SIZE, 0, &paddr, &plen);
@@ -454,23 +483,29 @@ main(int argc, char *argv[])
 					setupresolver();
 				continue;
 			} else
-				err(1, "recvfrom");
+				fatal("recvfrom");
 		}
 
 		status = ldns_wire2pkt(&query_pkt, inbuf, (size_t)nb);
 		if (status != LDNS_STATUS_OK) {
-			fprintf(stderr, "bad packet: %s\n",
+			log_warnx("bad packet: %s",
 			    ldns_get_errorstr_by_id(status));
 			continue;
 		} else
 			if (debug) {
-				fprintf(stderr, "received packet:\n");
-				ldns_pkt_print(stderr, query_pkt);
+				log_debug("received packet:");
+				logpacket(query_pkt);
 			}
 
 		hostn.hostname = hostnamefrompkt(query_pkt, &query_rr);
+#if 0
+		/* XXX make sure we dont search local domains for spoofed stuff */
+		fprintf(stderr, "%s\n", hostn.hostname);
+		char *sd = NULL;
+		if ((sd = strstr(hostn.hostname, ".peereboom.us")))
+			sd[0] = '\0';
+#endif
 		id = ldns_pkt_id(query_pkt);
-		/* XXX since we are returning NXdomain fakeout searchdomain requests as well */
 		if ((n = RB_FIND(hosttree, &hosthead, &hostn)) != NULL)
 			spoofquery(hostn.hostname, query_rr, id);
 		else

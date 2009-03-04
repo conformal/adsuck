@@ -3,6 +3,7 @@
 PROG=adsuck
 NOMAN=
 
+SRCS= adsuck.c log.c
 COPT+= -O2
 DEBUG+= -ggdb3 
 CFLAGS+= -Wall
