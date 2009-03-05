@@ -1,7 +1,7 @@
 # $adsuck$
 
 PROG=adsuck
-NOMAN=
+MAN=adsuck.8
 
 SRCS= adsuck.c log.c
 COPT+= -O2
