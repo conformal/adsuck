@@ -18,6 +18,7 @@
 #include <sys/tree.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 
 #include <ldns/ldns.h>
 
@@ -61,15 +62,21 @@ RB_HEAD(hosttree, hostnode) hosthead = RB_INITIALIZER(&hosthead);
 RB_GENERATE(hosttree, hostnode, hostentry, rb_strcmp)
 
 void
-sigterm(int sig)
+sighdlr(int sig)
 {
-	stop = 1;
-}
-
-void
-sighup(int sig)
-{
-	newresolv = 1;
+	switch (sig) {
+	case SIGINT:
+	case SIGTERM:
+		stop = 1;
+		break;
+	case SIGHUP:
+		newresolv = 1;
+		break;
+	case SIGCHLD:
+		while (waitpid(WAIT_ANY, NULL, WNOHANG) != -1) /* sig safe */
+			;
+		break;
+	}
 }
 
 void
@@ -295,6 +302,7 @@ forwardquery(char *hostname, ldns_rr *query_rr, u_int16_t id)
 		log_warn("cannot fork"); /* we'll just do it in parent proc */
 		break;
 	case 0:
+		signal(SIGCHLD, SIG_DFL);
 		child = 1;
 		break;
 	default:
@@ -335,7 +343,7 @@ forwardquery(char *hostname, ldns_rr *query_rr, u_int16_t id)
 	}
 
 	if (child)
-		exit(0);
+		_exit(0);
 unwind:
 	if (respkt)
 		ldns_pkt_free(respkt);
@@ -487,18 +495,25 @@ main(int argc, char *argv[])
 		fatal("can't drop privileges");
 
 	/* signaling */
-	sa.sa_handler = sigterm;
+	sa.sa_handler = sighdlr;
+	sigemptyset(&sa.sa_mask);
+	sa.sa_flags = 0;
+	if (sigaction(SIGCHLD, &sa, NULL) == -1)
+		fatal("could not install CHLD handler");
+
+	sa.sa_handler = sighdlr;
 	sigemptyset(&sa.sa_mask);
 	sa.sa_flags = 0;
 	if (sigaction(SIGTERM, &sa, NULL) == -1)
 		fatal("could not install TERM handler");
 
-	sa.sa_handler = sighup;
+	sa.sa_handler = sighdlr;
 	sigemptyset(&sa.sa_mask);
 	sa.sa_flags = 0;
 	if (sigaction(SIGHUP, &sa, NULL) == -1)
 		fatal("could not install HUP handler");
 	setupresolver();
+
 
 	while (!stop) {
 		nb = recvfrom(sock, inbuf, INBUF_SIZE, 0, &paddr, &plen);
