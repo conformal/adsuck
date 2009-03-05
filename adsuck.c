@@ -42,6 +42,7 @@ socklen_t		plen = (socklen_t) sizeof(paddr);
 /* resolver */
 ldns_resolver		*res;
 char			*resolv_conf;
+char			*domainname;
 volatile sig_atomic_t   newresolv;
 volatile sig_atomic_t   stop;
 
@@ -342,8 +343,6 @@ forwardquery(char *hostname, ldns_rr *query_rr, u_int16_t id)
 		}
 	}
 
-	if (child)
-		_exit(0);
 unwind:
 	if (respkt)
 		ldns_pkt_free(respkt);
@@ -351,6 +350,9 @@ unwind:
 		LDNS_FREE(outbuf);
 	if (qname)
 		ldns_rdf_free(qname);
+
+	if (child)
+		_exit(0);
 
 	return (rv);
 }
@@ -360,10 +362,15 @@ setupresolver(void)
 {
 	ldns_status		status;
 	char			*action = "using", *es;
+	char			buf[128];
+	ldns_rdf		*dn;
+	int			i;
 
 	if (res) {
 		ldns_resolver_free(res);
+		free(domainname); /* XXX is this ok for ldns? */
 		res = NULL;
+		domainname = NULL;
 		action = "rereading";
 	}
 
@@ -374,7 +381,30 @@ setupresolver(void)
 		fatalx(es);
 	}
 
-	log_info("%s %s", action, resolv_conf);
+	dn = ldns_resolver_domain(res);
+	if (dn == NULL) {
+		if (gethostname(buf, sizeof buf) == -1) {
+			log_warn("getdomainname failed");
+			domainname = NULL;
+		} else {
+			i = 0;
+			while (buf[i] != '.' && i < strlen(buf) -1)
+				i++;
+			if (buf[i] == '.')
+				i++;
+			asprintf(&domainname, "%s", &buf[i]);
+		}
+		log_info("buf %s", buf);
+	} else {
+		domainname = ldns_rdf2str(dn);
+		i = strlen(domainname);
+		if (i >= 1)
+			i--;
+		if (domainname[i] == '.')
+			domainname[i] = '\0';
+	}
+
+	log_info("%s %s, serving %s", action, resolv_conf, domainname);
 
 	newresolv = 0;
 }
@@ -396,14 +426,14 @@ main(int argc, char *argv[])
 	u_int16_t		id;
 	ldns_status		status;
 	ldns_pkt		*query_pkt;
-	struct hostnode		hostn, *n;
+	struct hostnode		hostn, *n, h;
 	ldns_rr			*query_rr;
 	char			*listen_addr = NULL;
 	u_int16_t		port = 53;
 	struct sigaction	sa;
 	struct passwd		*pw;
 	struct stat		stb;
-	char			*user = ADSUCK_USER;;
+	char			*user = ADSUCK_USER, *s;
 	char			*cdir = NULL;
 	int			foreground = 0;
 
@@ -450,14 +480,6 @@ main(int argc, char *argv[])
 
 	if ((pw = getpwnam(user)) == NULL)
 		errx(1, "unknown user %s", user);
-
-	while (argc) {
-		addhosts(argv[0]);
-		argc--;
-		argv++;
-	}
-	if (verbose)
-		log_info("total entries: %d", entries);
 
 	sock =  socket(AF_INET, SOCK_DGRAM, 0);
 	if (sock == -1)
@@ -514,6 +536,13 @@ main(int argc, char *argv[])
 		fatal("could not install HUP handler");
 	setupresolver();
 
+	while (argc) {
+		addhosts(argv[0]);
+		argc--;
+		argv++;
+	}
+	if (verbose)
+		log_info("total entries: %d", entries);
 
 	while (!stop) {
 		nb = recvfrom(sock, inbuf, INBUF_SIZE, 0, &paddr, &plen);
@@ -539,10 +568,26 @@ main(int argc, char *argv[])
 
 		hostn.hostname = hostnamefrompkt(query_pkt, &query_rr);
 		id = ldns_pkt_id(query_pkt);
-		if ((n = RB_FIND(hosttree, &hosthead, &hostn)) != NULL)
-			spoofquery(hostn.hostname, query_rr, id);
-		else
-			forwardquery(hostn.hostname, query_rr, id);
+		if ((s = strstr(hostn.hostname, domainname)) != NULL) {
+			/*
+			 * if we are in our own domain strip it of and try
+			 * without domain name; this is to work around
+			 * software that tries to be smart about domain names
+			 */
+			asprintf(&h.hostname, "%s", hostn.hostname);
+			h.hostname[s - hostn.hostname - 1] = '\0';
+			if (RB_FIND(hosttree, &hosthead, &h))
+				spoofquery(hostn.hostname, query_rr, id);
+			else
+				forwardquery(hostn.hostname, query_rr, id);
+			free(h.hostname);
+		} else {
+			/* not in our domain */
+			if ((n = RB_FIND(hosttree, &hosthead, &hostn)) != NULL)
+				spoofquery(hostn.hostname, query_rr, id);
+			else
+				forwardquery(hostn.hostname, query_rr, id);
+		}
 
 		free(hostn.hostname);
 		ldns_pkt_free(query_pkt);
