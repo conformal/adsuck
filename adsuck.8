@@ -1,0 +1,115 @@
+.\"	$adsuck$
+.\"
+.\" Copyright (c) 2009 Marco Peereboom <marco@peereboom.us>
+.\"
+.\" Permission to use, copy, modify, and distribute this software for any
+.\" purpose with or without fee is hereby granted, provided that the above
+.\" copyright notice and this permission notice appear in all copies.
+.\"
+.\" THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+.\" WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+.\" MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+.\" ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+.\" WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+.\" ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+.\" OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+.\"
+.Dd $Mdocdate$
+.Dt ADSUCK 1
+.Os
+.Sh NAME
+.Nm adsuck
+.Nd DNS blacklisting daemon
+.Sh SYNOPSIS
+.Nm adsuck
+.Bk -words
+.Op Fl Ddv
+.Op Fl c Ar directory
+.Op Fl f Ar resolv.conf
+.Op Fl l Ar listen
+.Op Fl u Ar username
+.Op Fl p Ar port
+.Ar hostsfile [...]
+.Ek
+.Sh DESCRIPTION
+.Nm adsuck
+is a small DNS server that spoofs blacklisted addresses and forwards all other
+queries.
+The idea is to be able to prevent connections to undesirable sites such as ad
+servers, crawlers and other nasties.
+It can be used locally, for the road warrior, or on the network perimeter in
+order to protect machines from malicious sites.
+.Pp
+.Nm
+works replies to bad addresses with a spoofed DNS packet that has the NXdomain
+flag set.
+This in effect prevents the application that is resolving the address from
+trying to connect to this address.
+Addresses that are not matched are being forwarded to normal nameserver that is
+provided in the resolv.conf file.
+.Pp
+Note: When applications try to be smart and resolve an address with the local domain
+name appended it will still spoof the answer.
+.Pp
+.Bl -tag -width Ds
+.It Fl D
+do not daemonize.
+.It Fl d
+enable debug output.
+.It Fl v
+enable verbose output.
+.It Fl c Ar directory
+This is the chroot directory.
+If it is not specified it uses the entry from /etc/passwd.
+.It Fl f Ar resolv.conf
+This is a standard formated resolv.conf file that contains the name server that
+can resolve non-blacklisted entries.
+.It Fl l Ar listen
+this is the address
+.Nm
+will listen on.
+By default it is 127.0.0.1.
+.It Fl u Ar user
+this is the user that
+.Nm
+will drop privileges to after it binds to the listen address.
+By default the user name is _adsuck.
+.It Fl p Ar port
+this is the port number that
+.Nm
+will bind to.
+By default
+.Nm
+will use port 53.
+.It hostsfile
+this is a standard formated hostsfile that contains all blacklisted entries.
+Examples of good blacklist files can be found at
+http://rlwpx.free.fr/WPFF/hosts.htm
+and
+http://www.mvps.org/winhelp2002/
+.El
+.Sh FILES
+.Bl -tag -width "resolv.conf" -compact
+.It Pa resolv.conf
+this is a standard resolv.conf file that contain the actual resolving
+nameserver and options.
+.It Pa hostsfile
+blacklist entries in standard hostsfile format.
+The entries must point to 127.0.0.1.
+E.g. 127.0.0.1 badsite.com
+.El
+.Sh HISTORY
+.Nm
+Was written to do some smarter ad blocking without using individual browser
+components and to avoid lengthy hostsfile lookups.
+.Sh AUTHORS
+.An -nosplit
+.Pp
+.Nm
+was written by
+.An Marco Peereboom Aq marco@peereboom.us
+.Sh BUGS
+Currently 
+.Nm
+depends on ldns.
+
