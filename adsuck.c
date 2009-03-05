@@ -397,6 +397,7 @@ setupresolver(void)
 
 	dn = ldns_resolver_domain(res);
 	if (dn == NULL) {
+		domainname = NULL;
 		if (gethostname(buf, sizeof buf) == -1) {
 			log_warn("getdomainname failed");
 			domainname = NULL;
@@ -404,11 +405,12 @@ setupresolver(void)
 			i = 0;
 			while (buf[i] != '.' && i < strlen(buf) -1)
 				i++;
-			if (buf[i] == '.')
+
+			if (buf[i] == '.' && strlen(buf) > 1) {
 				i++;
-			asprintf(&domainname, "%s", &buf[i]);
+				asprintf(&domainname, "%s", &buf[i]);
+			}
 		}
-		log_info("buf %s", buf);
 	} else {
 		domainname = ldns_rdf2str(dn);
 		i = strlen(domainname);
@@ -418,7 +420,8 @@ setupresolver(void)
 			domainname[i] = '\0';
 	}
 
-	log_info("%s %s, serving %s", action, resolv_conf, domainname);
+	log_info("%s %s, serving: %s", action, resolv_conf,
+	    domainname ? domainname : "no local domain set");
 
 	newresolv = 0;
 }
@@ -582,7 +585,8 @@ main(int argc, char *argv[])
 
 		hostn.hostname = hostnamefrompkt(query_pkt, &query_rr);
 		id = ldns_pkt_id(query_pkt);
-		if ((s = strstr(hostn.hostname, domainname)) != NULL) {
+		if (domainname &&
+		    (s = strstr(hostn.hostname, domainname)) != NULL) {
 			/*
 			 * if we are in our own domain strip it of and try
 			 * without domain name; this is to work around
