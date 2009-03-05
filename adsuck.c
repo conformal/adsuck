@@ -288,7 +288,18 @@ forwardquery(char *hostname, ldns_rr *query_rr, u_int16_t id)
 	ldns_rr_type		type;
 	ldns_rr_class		clas;
 	ldns_status		status;
-	int			rv = 1;
+	int			rv = 1, child = 0;
+
+	switch (fork()) {
+	case -1:
+		log_warn("cannot fork"); /* we'll just do it in parent proc */
+		break;
+	case 0:
+		child = 1;
+		break;
+	default:
+		return (0);
+	}
 
 	qname = ldns_dname_new_frm_str(hostname);
 	if (!qname) {
@@ -323,6 +334,8 @@ forwardquery(char *hostname, ldns_rr *query_rr, u_int16_t id)
 		}
 	}
 
+	if (child)
+		exit(0);
 unwind:
 	if (respkt)
 		ldns_pkt_free(respkt);
