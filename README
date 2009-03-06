@@ -1,0 +1,33 @@
+Installation
+
+The code was written on OpenBSD and the port contains the installation procedure. For non OpenBSD installation it needs to be done by hand.
+
+There are 2 methods of using adsuck:
+    1) as a local resolver for the road-warrior
+    2) as a perimeter resolver to protect local networks
+
+	Method 1
+	- Make and install adsuck somewhere that is available at boot
+	- Create a directory to chroot adsuck with 755 permissions (e.g. /var/adsuck)
+	- Create a _adsuck user and make its home directory the chroot directory
+	- Create a _adsuck group
+	- Copy the blacklist files (hosts.big and hosts.small) to the chroot directory
+	- Modify the dhclient script to not overwrite /etc/resolv.conf and instead write that file to the chroot directory
+	- Also modify the dhclient script to send SIGHUP to the adsuck daemon whenever it gets a new nameserver
+	- Modify the /etc/resolv.conf file to only one line reading: nameserver 127.0.0.1
+	- Add adsuck somewhere as a daemon so that it runs during boot (do this after dhclient and syslogd)
+	- Run adsuck, for example, with the following parameters: -c /var/adsuck -f /resolv.conf /hosts.small /hosts.big
+
+	Note: adsuck runs in a chroot environment and the above example would require 3 files in /var/adsuck; namely hosts.big, hosts.small and resolv.conf. Also note that in this example the dhclient script needs to overwrite /var/adsuck/resolv.conf every time it gets a new nameserver AND it has to send SIGHUP to the adsuck daemon to reread that file.
+
+	Method 2
+	- Make and install adsuck somewhere that is available at boot
+	- Create a directory to chroot adsuck with 755 permissions (e.g. /var/adsuck)
+	- Create a _adsuck user and make its home directory the chroot directory
+	- Create a _adsuck group
+	- Copy the blacklist files (hosts.big and hosts.small) to the chroot directory
+	- Create a resolv.conf file that contains your actual resolver information
+	- Add adsuck somewhere as a daemon so that it runs during boot (do this after dhclient and syslogd)
+	- Run adsuck, for example, with the following parameters: -l 192.168.0.1 -c /var/adsuck -f /resolv.conf /hosts.small /hosts.big
+
+	Note: this has to be done on whichever machine runs a valid nameserver for that network. If there is a local nameserver make it listen on, for example, port 54 of localhost and make the adsuck resolv.conf point there. 
