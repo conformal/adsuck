@@ -27,9 +27,9 @@
 .Op Fl c Ar directory
 .Op Fl f Ar resolv.conf
 .Op Fl l Ar listen
-.Op Fl u Ar username
 .Op Fl p Ar port
-.Ar hostsfile [...]
+.Op Fl u Ar user
+.Ar hostsfile ...
 .Ek
 .Sh DESCRIPTION
 .Nm adsuck
@@ -41,75 +41,78 @@ It can be used locally, for the road warrior, or on the network perimeter in
 order to protect machines from malicious sites.
 .Pp
 .Nm
-works replies to bad addresses with a spoofed DNS packet that has the NXdomain
+replies to bad addresses with a spoofed DNS packet that has the NXdomain
 flag set.
 This in effect prevents the application that is resolving the address from
 trying to connect to this address.
-Addresses that are not matched are being forwarded to normal nameserver that is
-provided in the resolv.conf file.
+Addresses that are not matched are forwarded to the normal nameserver,
+as provided by
+.Xr resolv.conf 5 .
 .Pp
-Note: When applications try to be smart and resolve an address with the local domain
-name appended it will still spoof the answer.
+Note that when applications try to be smart
+and resolve an address with the local domain name appended,
+it will still spoof the answer.
 .Pp
+The options are as follows:
 .Bl -tag -width Ds
-.It Fl D
-do not daemonize.
-.It Fl d
-enable debug output.
-.It Fl v
-enable verbose output.
 .It Fl c Ar directory
 This is the chroot directory.
-If it is not specified it uses the entry from /etc/passwd.
+If it is not specified, it uses the home_dir entry from
+.Pa /etc/passwd .
+.It Fl D
+Do not daemonize.
+.It Fl d
+Enable debug output.
 .It Fl f Ar resolv.conf
-This is a standard formated resolv.conf file that contains the name server that
+This is a standard formatted resolv.conf file that contains the name server that
 can resolve non-blacklisted entries.
 .It Fl l Ar listen
-this is the address
+This is the address
 .Nm
 will listen on.
-By default it is 127.0.0.1.
-.It Fl u Ar user
-this is the user that
-.Nm
-will drop privileges to after it binds to the listen address.
-By default the user name is _adsuck.
+The default is 127.0.0.1.
 .It Fl p Ar port
-this is the port number that
+This is the port number that
 .Nm
 will bind to.
-By default
+The default is 53.
+.It Fl u Ar user
+This is the user that
 .Nm
-will use port 53.
-.It hostsfile
-this is a standard formated hostsfile that contains all blacklisted entries.
+will drop privileges to after it binds to the listen address.
+The default is _adsuck.
+.It Fl v
+Enable verbose output.
+.It Ar hostsfile
+This is a standard formatted hostsfile that contains all blacklisted entries.
 Examples of good blacklist files can be found at
 http://rlwpx.free.fr/WPFF/hosts.htm
 and
-http://www.mvps.org/winhelp2002/
+http://www.mvps.org/winhelp2002/.
 .El
 .Sh FILES
-.Bl -tag -width "resolv.conf" -compact
-.It Pa resolv.conf
-this is a standard resolv.conf file that contain the actual resolving
-nameserver and options.
+.Bl -tag -width "resolv.confXXX"
 .It Pa hostsfile
-blacklist entries in standard hostsfile format.
+Blacklist entries in standard hostsfile format.
 The entries must point to 127.0.0.1.
 E.g. 127.0.0.1 badsite.com
+.It Pa resolv.conf
+Standard resolv.conf file that contain the actual resolving
+nameserver and options.
 .El
+.Sh SEE ALSO
+.Xr resolv.conf 5
 .Sh HISTORY
 .Nm
-Was written to do some smarter ad blocking without using individual browser
+was written to do some smarter ad blocking without using individual browser
 components and to avoid lengthy hostsfile lookups.
 .Sh AUTHORS
 .An -nosplit
 .Pp
 .Nm
 was written by
-.An Marco Peereboom Aq marco@peereboom.us
+.An Marco Peereboom Aq marco@peereboom.us .
 .Sh BUGS
-Currently 
+Currently
 .Nm
 depends on ldns.
-

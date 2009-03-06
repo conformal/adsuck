@@ -42,6 +42,7 @@
 #define INBUF_SIZE	(4096)
 #define LOCALIP		"127.0.0.1"
 #define ADSUCK_USER	"_adsuck"
+#define VERSION		"1.0"
 
 int			entries;
 int			verbose;
@@ -429,8 +430,9 @@ setupresolver(void)
 void
 usage(void)
 {
-	fprintf(stderr, "%s [-Ddv][-c chroot][-f resolv.conf][-l addr][-p port]"
-	    "[-u user][hostsfile ...]\n", __progname);
+	fprintf(stderr,
+	    "%s [-Ddv] [-c directory] [-f resolv.conf] [-l listen] [-p port]\n"
+	    "       [-u user] hostsfile ...\n", __progname);
 	exit(0);
 }
 
@@ -513,7 +515,7 @@ main(int argc, char *argv[])
 			fatal("daemon");
 	}
 
-	log_info("start");
+	log_info("start V%s", VERSION);
 
 	/* chroot */
 	if (cdir == NULL)
