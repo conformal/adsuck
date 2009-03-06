@@ -474,6 +474,21 @@ dosignals(int argc, char *argv[])
 }
 
 void
+installsignal(int sig, char *name)
+{
+	struct sigaction	sa;
+	char			msg[80];
+
+	sa.sa_handler = sighdlr;
+	sigemptyset(&sa.sa_mask);
+	sa.sa_flags = 0;
+	if (sigaction(sig, &sa, NULL) == -1) {
+		snprintf(msg, sizeof msg, "could not install %s handler", name);
+		fatal(msg);
+	}
+}
+
+void
 usage(void)
 {
 	fprintf(stderr,
@@ -495,7 +510,6 @@ main(int argc, char *argv[])
 	ldns_rr			*query_rr;
 	char			*listen_addr = NULL;
 	u_int16_t		port = 53;
-	struct sigaction	sa;
 	struct passwd		*pw;
 	struct stat		stb;
 	char			*user = ADSUCK_USER, *s;
@@ -582,31 +596,15 @@ main(int argc, char *argv[])
 		fatal("can't drop privileges");
 
 	/* signaling */
-	sa.sa_handler = sighdlr;
-	sigemptyset(&sa.sa_mask);
-	sa.sa_flags = 0;
-	if (sigaction(SIGCHLD, &sa, NULL) == -1)
-		fatal("could not install CHLD handler");
+	installsignal(SIGCHLD, "CHLD");
+	installsignal(SIGTERM, "TERM");
+	installsignal(SIGUSR1, "USR1");
+	installsignal(SIGHUP, "HUP");
 
-	sa.sa_handler = sighdlr;
-	sigemptyset(&sa.sa_mask);
-	sa.sa_flags = 0;
-	if (sigaction(SIGTERM, &sa, NULL) == -1)
-		fatal("could not install TERM handler");
-
-	sa.sa_handler = sighdlr;
-	sigemptyset(&sa.sa_mask);
-	sa.sa_flags = 0;
-	if (sigaction(SIGUSR1, &sa, NULL) == -1)
-		fatal("could not install SIGUSR1 handler");
-
-	sa.sa_handler = sighdlr;
-	sigemptyset(&sa.sa_mask);
-	sa.sa_flags = 0;
-	if (sigaction(SIGHUP, &sa, NULL) == -1)
-		fatal("could not install HUP handler");
+	/* external resolver */
 	setupresolver();
 
+	/* blacklists */
 	rereadhosts(argc, argv);
 
 	while (!stop) {
