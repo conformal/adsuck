@@ -1,4 +1,4 @@
-Installation
+=== Installation ===
 
 The code was written on OpenBSD and the port contains the installation procedure. For non OpenBSD installation it needs to be done by hand.
 
@@ -31,3 +31,14 @@ There are 2 methods of using adsuck:
 	- Run adsuck, for example, with the following parameters: -l 192.168.0.1 -c /var/adsuck -f /resolv.conf /hosts.small /hosts.big
 
 	Note: this has to be done on whichever machine runs a valid nameserver for that network. If there is a local nameserver make it listen on, for example, port 54 of localhost and make the adsuck resolv.conf point there. 
+
+
+=== Compiling ===
+
+OpenBSD:
+	make obj
+	make depend
+	make all
+
+Linux:
+	gmake -f GNUmakefile adsuck

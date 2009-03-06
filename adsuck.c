@@ -29,7 +29,11 @@
 #include <arpa/inet.h>
 
 #include <sys/errno.h>
+#ifndef __linux__
 #include <sys/tree.h>
+#else
+#include "linux/tree.h"
+#endif
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
@@ -42,7 +46,7 @@
 #define INBUF_SIZE	(4096)
 #define LOCALIP		"127.0.0.1"
 #define ADSUCK_USER	"_adsuck"
-#define VERSION		"1.2"
+#define VERSION		"1.3"
 
 int			entries;
 int			verbose;
