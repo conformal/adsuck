@@ -64,6 +64,7 @@ char			*resolv_conf;
 char			*domainname;
 volatile sig_atomic_t   newresolv;
 volatile sig_atomic_t   stop;
+volatile sig_atomic_t   reread;
 
 extern char		*__progname;
 
@@ -95,6 +96,8 @@ sighdlr(int sig)
 	case SIGCHLD:
 		while (waitpid(WAIT_ANY, NULL, WNOHANG) != -1) /* sig safe */
 			;
+	case SIGUSR1:
+		reread = 1;
 		break;
 	}
 }
@@ -153,12 +156,42 @@ addhosts(char *filename)
 		strlcpy(hostn->hostname, p, len + 1);
 		if (RB_INSERT(hosttree, &hosthead, hostn))
 			free(hostn); /* duplicate R/B entry */
-		newentry++;
+		else
+			newentry++;
 	}
 	if (verbose)
 		log_info("added entries: %d", newentry);
 	entries += newentry;
 	fclose(f);
+}
+
+int
+rereadhosts(int argc, char *argv[])
+{
+	struct hostnode		*n, *nxt;
+
+	if (!RB_EMPTY(&hosthead)) {
+		log_info("rereading blacklist entries");
+		for (n = RB_MIN(hosttree, &hosthead); n != NULL; n = nxt) {
+			nxt = RB_NEXT(hosttree, &hosthead, n);
+			RB_REMOVE(hosttree, &hosthead, n);
+			free(n);
+			entries--;
+		}
+		reread = 0;
+	}
+
+	while (argc) {
+		log_info("adding %s", argv[0]);
+
+		addhosts(argv[0]);
+		argc--;
+		argv++;
+	}
+
+	log_info("total entries: %d", entries);
+
+	return (0);
 }
 
 int
@@ -432,6 +465,15 @@ setupresolver(void)
 }
 
 void
+dosignals(int argc, char *argv[])
+{
+	if (newresolv)
+		setupresolver();
+	if (reread)
+		rereadhosts(argc, argv);
+}
+
+void
 usage(void)
 {
 	fprintf(stderr,
@@ -555,28 +597,28 @@ main(int argc, char *argv[])
 	sa.sa_handler = sighdlr;
 	sigemptyset(&sa.sa_mask);
 	sa.sa_flags = 0;
+	if (sigaction(SIGUSR1, &sa, NULL) == -1)
+		fatal("could not install SIGUSR1 handler");
+
+	sa.sa_handler = sighdlr;
+	sigemptyset(&sa.sa_mask);
+	sa.sa_flags = 0;
 	if (sigaction(SIGHUP, &sa, NULL) == -1)
 		fatal("could not install HUP handler");
 	setupresolver();
 
-	while (argc) {
-		addhosts(argv[0]);
-		argc--;
-		argv++;
-	}
-	if (verbose)
-		log_info("total entries: %d", entries);
+	rereadhosts(argc, argv);
 
 	while (!stop) {
 		nb = recvfrom(sock, inbuf, INBUF_SIZE, 0, &paddr, &plen);
 		if (nb == -1) {
 			if (errno == EINTR || errno == EAGAIN) {
-				if (newresolv)
-					setupresolver();
+				dosignals(argc, argv);
 				continue;
 			} else
 				fatal("recvfrom");
 		}
+		dosignals(argc, argv);
 
 		status = ldns_wire2pkt(&query_pkt, inbuf, (size_t)nb);
 		if (status != LDNS_STATUS_OK) {
