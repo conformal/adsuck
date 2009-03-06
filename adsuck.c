@@ -42,7 +42,7 @@
 #define INBUF_SIZE	(4096)
 #define LOCALIP		"127.0.0.1"
 #define ADSUCK_USER	"_adsuck"
-#define VERSION		"1.0"
+#define VERSION		"1.1"
 
 int			entries;
 int			verbose;
