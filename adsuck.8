@@ -76,6 +76,11 @@ This is the port number that
 .Nm
 will bind to.
 The default is 53.
+.It Fl r Ar regexfile
+Filename of a file that contains one regex expression per line; e.g
+banner|ads|stat|track|click.
+When matched the DNS response will be spoofed.
+The regex engine runs before the hostsfile match.
 .It Fl u Ar user
 This is the user that
 .Nm

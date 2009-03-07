@@ -599,7 +599,7 @@ usage(void)
 {
 	fprintf(stderr,
 	    "%s [-Ddv] [-c directory] [-f resolv.conf] [-l listen] [-p port]\n"
-	    "       [-u user] hostsfile ...\n", __progname);
+	    "       [-r regexfile] [-u user] hostsfile ...\n", __progname);
 	exit(0);
 }
 
