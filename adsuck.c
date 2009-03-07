@@ -23,6 +23,7 @@
 #include <unistd.h>
 #include <signal.h>
 #include <pwd.h>
+#include <regex.h>
 
 #include <netinet/in.h>
 
@@ -31,6 +32,7 @@
 #include <sys/errno.h>
 #ifndef __linux__
 #include <sys/tree.h>
+#include <sys/queue.h>
 #else
 #include "linux/tree.h"
 #endif
@@ -46,7 +48,7 @@
 #define INBUF_SIZE	(4096)
 #define LOCALIP		"127.0.0.1"
 #define ADSUCK_USER	"_adsuck"
-#define VERSION		"1.3"
+#define VERSION		"1.4"
 
 int			entries;
 int			verbose;
@@ -67,6 +69,15 @@ volatile sig_atomic_t   stop;
 volatile sig_atomic_t   reread;
 
 extern char		*__progname;
+
+struct regexnode {
+	SIMPLEQ_ENTRY(regexnode)	rlink;
+	regex_t				rregex;
+	char				*rname;
+};
+
+SIMPLEQ_HEAD(regexhead, regexnode);
+struct regexhead	rh;
 
 struct hostnode {
 	RB_ENTRY(hostnode)	hostentry;
@@ -490,6 +501,100 @@ installsignal(int sig, char *name)
 }
 
 void
+freeregex(void)
+{
+	struct regexnode	*n;
+
+	if (SIMPLEQ_EMPTY(&rh))
+		return;
+
+	while (!SIMPLEQ_EMPTY(&rh)) {
+		n = SIMPLEQ_FIRST(&rh);
+		SIMPLEQ_REMOVE_HEAD(&rh, rlink);
+		regfree(&n->rregex);
+		free(n->rname);
+		free(n);
+	}
+	SIMPLEQ_INIT(&rh);
+}
+
+int
+setupregex(char *filename)
+{
+	char			l[MAXLINE], er[MAXLINE * 2], *p;
+	FILE			*f;
+	int			i = 0, rv;
+	struct regexnode	*n;
+
+	if (!SIMPLEQ_EMPTY(&rh))
+		freeregex();
+
+	if (filename == NULL)
+		return (0);
+
+	log_info("regex file: %s", filename);
+
+	f = fopen(filename, "r");
+	if (f == NULL)
+		fatal("can't open regex file");
+
+	while (!feof(f)) {
+		if (fgets(l, sizeof l, f) == NULL && feof(f))
+			break;
+		if (l[0] == '#')
+			continue; /* comment */
+		p = l;
+		i++;
+
+		/* strip of newline cariage return */
+		p[strcspn(p, "\r")] = '\0';
+		p[strcspn(p, "\n")] = '\0';
+		if (debug)
+			log_debug("regex line %s", l);
+
+		n = malloc(sizeof *n);
+		if (n == NULL)
+			fatal("regex node");
+
+		if (asprintf(&n->rname, "%s", l) == -1)
+			fatal("regex asprintf");
+
+		if ((rv = regcomp(&n->rregex, l, REG_EXTENDED | REG_NOSUB))
+		    != 0) {
+			regerror(rv, &n->rregex, er, PATH_MAX - 1);
+			snprintf(er, sizeof er, "regcomp failed %s", l);
+			fatalx(er);
+		}
+
+		SIMPLEQ_INSERT_TAIL(&rh, n, rlink);
+	}
+
+	if (verbose)
+		log_info("total regex expressions: %d", i);
+
+	return (i);
+}
+
+int
+runregex(char *hostname)
+{
+	struct regexnode	*n;
+	int			rv = 1;
+
+	SIMPLEQ_FOREACH(n, &rh, rlink) {
+		if (regexec(&n->rregex, hostname, 0, NULL, 0) != 0)
+			continue;
+		/* we have a match */
+		if (verbose)
+			log_info("regex match: %s", n->rname);
+		rv = 0;
+		break;
+	}
+
+	return (rv);
+}
+
+void
 usage(void)
 {
 	fprintf(stderr,
@@ -514,12 +619,12 @@ main(int argc, char *argv[])
 	struct passwd		*pw;
 	struct stat		stb;
 	char			*user = ADSUCK_USER, *s;
-	char			*cdir = NULL;
-	int			foreground = 0;
+	char			*cdir = NULL, *regexfile = NULL;
+	int			foreground = 0, rcount = 0;
 
 	log_init(1);		/* log to stderr until daemonized */
 
-	while ((c = getopt(argc, argv, "Dc:df:l:u:p:v")) != -1) {
+	while ((c = getopt(argc, argv, "Dc:df:l:u:p:r:v")) != -1) {
 		switch (c) {
 		case 'D':
 			foreground = 1;
@@ -538,6 +643,9 @@ main(int argc, char *argv[])
 			break;
 		case 'p':
 			port = atoi(optarg);
+			break;
+		case 'r':
+			regexfile = optarg;
 			break;
 		case 'u':
 			user = optarg;
@@ -608,6 +716,10 @@ main(int argc, char *argv[])
 	/* blacklists */
 	rereadhosts(argc, argv);
 
+	/* regex */
+	SIMPLEQ_INIT(&rh);
+	rcount = setupregex(regexfile);
+
 	while (!stop) {
 		nb = recvfrom(sock, inbuf, INBUF_SIZE, 0, &paddr, &plen);
 		if (nb == -1) {
@@ -641,14 +753,18 @@ main(int argc, char *argv[])
 			 */
 			asprintf(&h.hostname, "%s", hostn.hostname);
 			h.hostname[s - hostn.hostname - 1] = '\0';
-			if (RB_FIND(hosttree, &hosthead, &h))
+			if (runregex(h.hostname) == 0)
+				spoofquery(hostn.hostname, query_rr, id);
+			else if (RB_FIND(hosttree, &hosthead, &h))
 				spoofquery(hostn.hostname, query_rr, id);
 			else
 				forwardquery(hostn.hostname, query_rr, id);
 			free(h.hostname);
 		} else {
 			/* not in our domain */
-			if ((n = RB_FIND(hosttree, &hosthead, &hostn)) != NULL)
+			if (runregex(hostn.hostname) == 0)
+				spoofquery(hostn.hostname, query_rr, id);
+			else if ((n = RB_FIND(hosttree, &hosthead, &hostn)) != NULL)
 				spoofquery(hostn.hostname, query_rr, id);
 			else
 				forwardquery(hostn.hostname, query_rr, id);
@@ -657,6 +773,8 @@ main(int argc, char *argv[])
 		free(hostn.hostname);
 		ldns_pkt_free(query_pkt);
 	}
+
+	freeregex();
 
 	log_info("exiting");
 
