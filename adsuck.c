@@ -96,6 +96,7 @@ sighdlr(int sig)
 	case SIGCHLD:
 		while (waitpid(WAIT_ANY, NULL, WNOHANG) != -1) /* sig safe */
 			;
+		break;
 	case SIGUSR1:
 		reread = 1;
 		break;
