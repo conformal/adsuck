@@ -86,10 +86,16 @@ Enable verbose output.
 .It Ar hostsfile
 This is a standard formatted hostsfile that contains all blacklisted entries.
 Examples of good blacklist files can be found at
-http://rlwpx.free.fr/WPFF/hosts.htm
-and
-http://www.mvps.org/winhelp2002/.
+.Bd -literal
+http://rlwpx.free.fr/WPFF/hosts.htm and
+http://www.mvps.org/winhelp2002/
+.Ed
 .El
+.Pp
+Sending
+.Nm
+a SIGHUP signal will cause it to reread the resolv.conf file.
+A SIGUSR1 signal will cause it to reread all hostsfiles.
 .Sh FILES
 .Bl -tag -width "resolv.confXXX"
 .It Pa hostsfile
