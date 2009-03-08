@@ -354,6 +354,7 @@ spoofquery(struct hostnode *hn, ldns_rr *query_rr, u_int16_t id)
 		ipaddr = hn->ipaddr;
 		hostname = hn->hostname;
 	}
+
 	/* answer section */
 	answer_an = ldns_rr_list_new();
 	if (answer_an == NULL)
@@ -868,7 +869,7 @@ main(int argc, char *argv[])
 			h.hostname[s - hostn.hostname - 1] = '\0';
 			if (runregex(h.hostname) == 0)
 				spoofquery(&hostn, query_rr, id);
-			else if ((n == RB_FIND(hosttree, &hosthead, &h)) != NULL)
+			else if ((n = RB_FIND(hosttree, &hosthead, &h)) != NULL)
 				spoofquery(n, query_rr, id);
 			else
 				forwardquery(hostn.hostname, query_rr, id);
