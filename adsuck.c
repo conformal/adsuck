@@ -84,6 +84,7 @@ struct regexhead	rh;
 struct hostnode {
 	RB_ENTRY(hostnode)	hostentry;
 	char			*hostname;
+	char			*ipaddr;
 };
 
 int
@@ -131,12 +132,65 @@ logpacket(ldns_pkt *pkt)
 	LDNS_FREE(str);
 }
 
+int
+parseline(char *l, char **ip, char **host)
+{
+	int			i, len, rv = 1;
+	char			*h;
+	in_addr_t		ipaddr;
+
+	/* sanity */
+	if (ip == NULL || host == NULL)
+		goto done;
+
+	/* validate we have a valid ip */
+	ipaddr = inet_addr(l); /* doesn't care about trailing spaces */
+	if ((int)ipaddr == -1)
+		goto done;
+
+	/* strip of newline cariage return */
+	l[strcspn(l, "\r")] = '\0';
+	l[strcspn(l, "\n")] = '\0';
+
+	/* redirect to ip */
+	i = 0;
+	len = strlen(l);
+	/* skip to hostname */
+	while (!isblank(l[i]) && i < len)
+		i++;
+	if (i >= len)
+		goto done;
+	l[i] = '\0';
+	i++;
+
+	/* skip whitespace to hostname */
+	while (isblank(l[i]) && i < len)
+		i++;
+	if (i >= len)
+		goto done;
+	h = &l[i];
+	i++;
+
+	/* find last char of hostname */
+	while (!isblank(l[i]) && l[i] != '\0' && i < len)
+		i++;
+	if (i < len)
+		l[i] = '\0';
+
+	*ip = l;
+	*host = h;
+	rv = 0;
+done:
+	return (rv);
+}
+
 void
 addhosts(char *filename)
 {
 	FILE			*f;
-	char			l[MAXLINE], *p;
-	int			x, newentry = 0;
+	char			l[MAXLINE];
+	char			*ip, *host;
+	int			newentry = 0, line = 0;
 	size_t			len;
 	struct hostnode		*hostn;
 
@@ -145,32 +199,47 @@ addhosts(char *filename)
 		fatal("can't open hosts file");
 
 	while (!feof(f)) {
+		line++;
 		if (fgets(l, sizeof l, f) == NULL && feof(f))
 			break;
-		if (l[0] != '1')
-			continue;
-		if (strncmp(l, LOCALIP, strlen(LOCALIP)))
-			continue;
-		for (x = strlen(LOCALIP); x < sizeof l; x++)
-			if (!isblank(l[x]))
-				break;
-		p = l + x;
 
+		/* skip comments and other garbage */
+		if (l[0] == '\0')
+			continue;
+		if (l[0] == '\r')
+			continue;
+		if (l[0] == '\n')
+			continue;
+		if (l[0] == '#')
+			continue;
+
+		if (parseline(l, &ip, &host)) {
+			log_info("invalid entry on line %d", line);
+			continue;
+		}
 		/* skip localhost */
-		if (!strncmp(p, "localhost", strlen("localhost")))
+		if (!strcmp(host, "localhost"))
 			continue;
 
-		/* strip of newline cariage return */
-		p[strcspn(p, "\r")] = '\0';
-		p[strcspn(p, "\n")] = '\0';
 
 		/* we got one! */
-		len = strlen(p);
-		hostn = malloc(sizeof(struct hostnode) + len + 1);
+		len = strlen(host) + 1;
+		if (strcmp(LOCALIP, ip))
+			len += strlen(ip) + 1;
+		else
+			ip = NULL; /* localhost */
+
+		hostn = calloc(1, sizeof(struct hostnode) + len);
 		if (hostn == NULL)
 			fatal("not enough memory");
+
 		hostn->hostname = (char *)(hostn + 1);
-		strlcpy(hostn->hostname, p, len + 1);
+		strlcpy(hostn->hostname, host, strlen(host) + 1);
+		if (ip) {
+			hostn->ipaddr = hostn->hostname + strlen(host) + 1;
+			strlcpy(hostn->ipaddr, ip, strlen(ip) + 1);
+		} else
+			hostn->ipaddr = NULL;
 		if (RB_INSERT(hosttree, &hosthead, hostn))
 			free(hostn); /* duplicate R/B entry */
 		else
@@ -269,7 +338,7 @@ done:
 }
 
 int
-spoofquery(char *hostname, ldns_rr *query_rr, u_int16_t id)
+spoofquery(struct hostnode *hn, ldns_rr *query_rr, u_int16_t id)
 {
 	ldns_status		status;
 	ldns_rr_list		*answer_an = NULL;
@@ -277,6 +346,9 @@ spoofquery(char *hostname, ldns_rr *query_rr, u_int16_t id)
 	ldns_rr_list		*answer_ad = NULL;
 	ldns_rr_list		*answer_qr = NULL;
 	ldns_pkt		*answer_pkt = NULL;
+	ldns_rr			*myrr = NULL, *myaurr = NULL;
+	ldns_rdf		*prev = NULL;
+	char			buf[MAXLINE * 2];
 	size_t			answer_size;
 	uint8_t			*outbuf = NULL;
 	int			rv = 1;
@@ -290,6 +362,35 @@ spoofquery(char *hostname, ldns_rr *query_rr, u_int16_t id)
 	answer_ns = ldns_rr_list_new();
 	if (answer_ns == NULL)
 		goto unwind;
+
+	/* if we have an ip spoof it there */
+	if (hn->ipaddr) {
+		/* an */
+		snprintf(buf, sizeof buf, "%s.\t%d\tIN\tA\t%s",
+		    hn->hostname, 259200, hn->ipaddr);
+		status = ldns_rr_new_frm_str(&myrr, buf, 0, NULL, &prev);
+		if (status != LDNS_STATUS_OK) {
+			fprintf(stderr, "can't create answer section: %s\n",
+			    ldns_get_errorstr_by_id(status));
+			goto unwind;
+		}
+		ldns_rr_list_push_rr(answer_an, myrr);
+		ldns_rdf_deep_free(prev);
+		prev = NULL;
+
+		/* ns */
+		snprintf(buf, sizeof buf, "%s.\t%d\tIN\tNS\t127.0.0.1.",
+		    hn->hostname, 259200);
+		status = ldns_rr_new_frm_str(&myaurr, buf, 0, NULL, &prev);
+		if (status != LDNS_STATUS_OK) {
+			fprintf(stderr, "can't create authority section: %s\n",
+			    ldns_get_errorstr_by_id(status));
+			goto unwind;
+		}
+		ldns_rr_list_push_rr(answer_ns, myaurr);
+		ldns_rdf_deep_free(prev);
+		prev = NULL;
+	}
 
 	/* question section */
 	answer_qr = ldns_rr_list_new();
@@ -310,7 +411,8 @@ spoofquery(char *hostname, ldns_rr *query_rr, u_int16_t id)
 	ldns_pkt_set_qr(answer_pkt, 1);
 	ldns_pkt_set_aa(answer_pkt, 1);
 	ldns_pkt_set_id(answer_pkt, id);
-	ldns_pkt_set_rcode(answer_pkt, LDNS_RCODE_NXDOMAIN);
+	if (hn->ipaddr == NULL)
+		ldns_pkt_set_rcode(answer_pkt, LDNS_RCODE_NXDOMAIN);
 
 	ldns_pkt_push_rr_list(answer_pkt, LDNS_SECTION_QUESTION, answer_qr);
 	ldns_pkt_push_rr_list(answer_pkt, LDNS_SECTION_ANSWER, answer_an);
@@ -332,8 +434,9 @@ spoofquery(char *hostname, ldns_rr *query_rr, u_int16_t id)
 		else {
 			rv = 0;
 			if (verbose)
-				log_info("spoofquery: spoofing %s",
-				    hostname);
+				log_info("spoofquery: spoofing %s to %s",
+				    hn->hostname,
+				    hn->ipaddr ? hn->ipaddr : "NXdomain");
 		}
 	}
 
@@ -550,8 +653,7 @@ setupregex(void)
 		SIMPLEQ_INSERT_TAIL(&rh, n, rlink);
 	}
 
-	if (verbose)
-		log_info("total regex expressions: %d", i);
+	log_info("total regex expressions: %d", i);
 
 	rereadregex = 0;
 
@@ -623,7 +725,7 @@ main(int argc, char *argv[])
 	u_int16_t		id;
 	ldns_status		status;
 	ldns_pkt		*query_pkt;
-	struct hostnode		hostn, *n, h;
+	struct hostnode		hostn, *n = NULL, h;
 	ldns_rr			*query_rr;
 	char			*listen_addr = NULL;
 	u_int16_t		port = 53;
@@ -754,6 +856,7 @@ main(int argc, char *argv[])
 				logpacket(query_pkt);
 			}
 
+		bzero(&hostn, sizeof hostn);
 		hostn.hostname = hostnamefrompkt(query_pkt, &query_rr);
 		id = ldns_pkt_id(query_pkt);
 		if (domainname &&
@@ -766,18 +869,18 @@ main(int argc, char *argv[])
 			asprintf(&h.hostname, "%s", hostn.hostname);
 			h.hostname[s - hostn.hostname - 1] = '\0';
 			if (runregex(h.hostname) == 0)
-				spoofquery(hostn.hostname, query_rr, id);
-			else if (RB_FIND(hosttree, &hosthead, &h))
-				spoofquery(hostn.hostname, query_rr, id);
+				spoofquery(&hostn, query_rr, id);
+			else if ((n == RB_FIND(hosttree, &hosthead, &h)) != NULL)
+				spoofquery(n, query_rr, id);
 			else
 				forwardquery(hostn.hostname, query_rr, id);
 			free(h.hostname);
 		} else {
 			/* not in our domain */
 			if (runregex(hostn.hostname) == 0)
-				spoofquery(hostn.hostname, query_rr, id);
+				spoofquery(&hostn, query_rr, id);
 			else if ((n = RB_FIND(hosttree, &hosthead, &hostn)) != NULL)
-				spoofquery(hostn.hostname, query_rr, id);
+				spoofquery(n, query_rr, id);
 			else
 				forwardquery(hostn.hostname, query_rr, id);
 		}
