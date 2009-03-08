@@ -1,3 +1,5 @@
+resolv.conf and regex are example files for resolver & regex respectively.
+
 Hosts.blc, Hosts.pub, Hosts.rsk, Hosts.trc are distributed by:
 http://rlwpx.free.fr/WPFF/hosts.htm
 
