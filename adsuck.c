@@ -64,9 +64,11 @@ socklen_t		plen = (socklen_t) sizeof(paddr);
 ldns_resolver		*res;
 char			*resolv_conf;
 char			*domainname;
+char			*regexfile;
 volatile sig_atomic_t   newresolv;
 volatile sig_atomic_t   stop;
 volatile sig_atomic_t   reread;
+volatile sig_atomic_t   rereadregex;
 
 extern char		*__progname;
 
@@ -110,6 +112,9 @@ sighdlr(int sig)
 		break;
 	case SIGUSR1:
 		reread = 1;
+		break;
+	case SIGUSR2:
+		rereadregex = 1;
 		break;
 	}
 }
@@ -477,30 +482,6 @@ setupresolver(void)
 }
 
 void
-dosignals(int argc, char *argv[])
-{
-	if (newresolv)
-		setupresolver();
-	if (reread)
-		rereadhosts(argc, argv);
-}
-
-void
-installsignal(int sig, char *name)
-{
-	struct sigaction	sa;
-	char			msg[80];
-
-	sa.sa_handler = sighdlr;
-	sigemptyset(&sa.sa_mask);
-	sa.sa_flags = 0;
-	if (sigaction(sig, &sa, NULL) == -1) {
-		snprintf(msg, sizeof msg, "could not install %s handler", name);
-		fatal(msg);
-	}
-}
-
-void
 freeregex(void)
 {
 	struct regexnode	*n;
@@ -519,7 +500,7 @@ freeregex(void)
 }
 
 int
-setupregex(char *filename)
+setupregex(void)
 {
 	char			l[MAXLINE], er[MAXLINE * 2], *p;
 	FILE			*f;
@@ -529,12 +510,12 @@ setupregex(char *filename)
 	if (!SIMPLEQ_EMPTY(&rh))
 		freeregex();
 
-	if (filename == NULL)
+	if (regexfile == NULL)
 		return (0);
 
-	log_info("regex file: %s", filename);
+	log_info("regex file: %s", regexfile);
 
-	f = fopen(filename, "r");
+	f = fopen(regexfile, "r");
 	if (f == NULL)
 		fatal("can't open regex file");
 
@@ -572,6 +553,8 @@ setupregex(char *filename)
 	if (verbose)
 		log_info("total regex expressions: %d", i);
 
+	rereadregex = 0;
+
 	return (i);
 }
 
@@ -592,6 +575,32 @@ runregex(char *hostname)
 	}
 
 	return (rv);
+}
+
+void
+dosignals(int argc, char *argv[])
+{
+	if (newresolv)
+		setupresolver();
+	if (reread)
+		rereadhosts(argc, argv);
+	if (rereadregex)
+		setupregex();
+}
+
+void
+installsignal(int sig, char *name)
+{
+	struct sigaction	sa;
+	char			msg[80];
+
+	sa.sa_handler = sighdlr;
+	sigemptyset(&sa.sa_mask);
+	sa.sa_flags = 0;
+	if (sigaction(sig, &sa, NULL) == -1) {
+		snprintf(msg, sizeof msg, "could not install %s handler", name);
+		fatal(msg);
+	}
 }
 
 void
@@ -619,7 +628,7 @@ main(int argc, char *argv[])
 	struct passwd		*pw;
 	struct stat		stb;
 	char			*user = ADSUCK_USER, *s;
-	char			*cdir = NULL, *regexfile = NULL;
+	char			*cdir = NULL;
 	int			foreground = 0, rcount = 0;
 
 	log_init(1);		/* log to stderr until daemonized */
@@ -708,6 +717,7 @@ main(int argc, char *argv[])
 	installsignal(SIGCHLD, "CHLD");
 	installsignal(SIGTERM, "TERM");
 	installsignal(SIGUSR1, "USR1");
+	installsignal(SIGUSR2, "USR2");
 	installsignal(SIGHUP, "HUP");
 
 	/* external resolver */
@@ -718,7 +728,7 @@ main(int argc, char *argv[])
 
 	/* regex */
 	SIMPLEQ_INIT(&rh);
-	rcount = setupregex(regexfile);
+	rcount = setupregex();
 
 	while (!stop) {
 		nb = recvfrom(sock, inbuf, INBUF_SIZE, 0, &paddr, &plen);
