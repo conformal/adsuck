@@ -347,7 +347,12 @@ spoofquery(struct hostnode *hn, ldns_rr *query_rr, u_int16_t id)
 	size_t			answer_size;
 	uint8_t			*outbuf = NULL;
 	int			rv = 1;
+	char			*ipaddr = NULL, *hostname = NULL;
 
+	if (hn) {
+		ipaddr = hn->ipaddr;
+		hostname = hn->hostname;
+	}
 	/* answer section */
 	answer_an = ldns_rr_list_new();
 	if (answer_an == NULL)
@@ -359,10 +364,10 @@ spoofquery(struct hostnode *hn, ldns_rr *query_rr, u_int16_t id)
 		goto unwind;
 
 	/* if we have an ip spoof it there */
-	if (hn->ipaddr) {
+	if (ipaddr) {
 		/* an */
 		snprintf(buf, sizeof buf, "%s.\t%d\tIN\tA\t%s",
-		    hn->hostname, 259200, hn->ipaddr);
+		    hostname, 259200, ipaddr);
 		status = ldns_rr_new_frm_str(&myrr, buf, 0, NULL, &prev);
 		if (status != LDNS_STATUS_OK) {
 			fprintf(stderr, "can't create answer section: %s\n",
@@ -375,7 +380,7 @@ spoofquery(struct hostnode *hn, ldns_rr *query_rr, u_int16_t id)
 
 		/* ns */
 		snprintf(buf, sizeof buf, "%s.\t%d\tIN\tNS\t127.0.0.1.",
-		    hn->hostname, 259200);
+		    hostname, 259200);
 		status = ldns_rr_new_frm_str(&myaurr, buf, 0, NULL, &prev);
 		if (status != LDNS_STATUS_OK) {
 			fprintf(stderr, "can't create authority section: %s\n",
@@ -406,7 +411,7 @@ spoofquery(struct hostnode *hn, ldns_rr *query_rr, u_int16_t id)
 	ldns_pkt_set_qr(answer_pkt, 1);
 	ldns_pkt_set_aa(answer_pkt, 1);
 	ldns_pkt_set_id(answer_pkt, id);
-	if (hn->ipaddr == NULL)
+	if (ipaddr == NULL)
 		ldns_pkt_set_rcode(answer_pkt, LDNS_RCODE_NXDOMAIN);
 
 	ldns_pkt_push_rr_list(answer_pkt, LDNS_SECTION_QUESTION, answer_qr);
@@ -430,8 +435,7 @@ spoofquery(struct hostnode *hn, ldns_rr *query_rr, u_int16_t id)
 			rv = 0;
 			if (verbose)
 				log_info("spoofquery: spoofing %s to %s",
-				    hn->hostname,
-				    hn->ipaddr ? hn->ipaddr : "NXdomain");
+				    hostname, ipaddr ? ipaddr : "NXdomain");
 		}
 	}
 
