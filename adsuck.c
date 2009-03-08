@@ -35,6 +35,7 @@
 #include <sys/queue.h>
 #else
 #include "linux/tree.h"
+#include "linux/queue.h"
 #endif
 #include <sys/types.h>
 #include <sys/stat.h>
