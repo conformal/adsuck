@@ -555,6 +555,8 @@ setupregex(void)
 
 	rereadregex = 0;
 
+	fclose(f);
+
 	return (i);
 }
 
