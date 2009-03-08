@@ -68,7 +68,6 @@ char			*regexfile;
 volatile sig_atomic_t   newresolv;
 volatile sig_atomic_t   stop;
 volatile sig_atomic_t   reread;
-volatile sig_atomic_t   rereadregex;
 
 extern char		*__progname;
 
@@ -113,9 +112,6 @@ sighdlr(int sig)
 		break;
 	case SIGUSR1:
 		reread = 1;
-		break;
-	case SIGUSR2:
-		rereadregex = 1;
 		break;
 	}
 }
@@ -264,7 +260,6 @@ rereadhosts(int argc, char *argv[])
 			free(n);
 			entries--;
 		}
-		reread = 0;
 	}
 
 	while (argc) {
@@ -655,8 +650,6 @@ setupregex(void)
 
 	log_info("total regex expressions: %d", i);
 
-	rereadregex = 0;
-
 	fclose(f);
 
 	return (i);
@@ -686,10 +679,11 @@ dosignals(int argc, char *argv[])
 {
 	if (newresolv)
 		setupresolver();
-	if (reread)
+	if (reread) {
 		rereadhosts(argc, argv);
-	if (rereadregex)
 		setupregex();
+		reread = 0;
+	}
 }
 
 void
@@ -821,7 +815,6 @@ main(int argc, char *argv[])
 	installsignal(SIGCHLD, "CHLD");
 	installsignal(SIGTERM, "TERM");
 	installsignal(SIGUSR1, "USR1");
-	installsignal(SIGUSR2, "USR2");
 	installsignal(SIGHUP, "HUP");
 
 	/* external resolver */

@@ -99,15 +99,21 @@ http://www.mvps.org/winhelp2002/
 .Pp
 Sending
 .Nm
-a SIGHUP signal will cause it to reread the resolv.conf file.
-A SIGUSR1 signal will cause it to reread all hostsfiles.
-To reread the regex file issue a SIGUSR2.
+a SIGHUP signal will cause it to reevaluate the resolv.conf file.
+A SIGUSR1 signal will cause it to reread all hostsfiles and regex file.
 .Sh FILES
 .Bl -tag -width "resolv.confXXX"
 .It Pa hostsfile
 Blacklist entries in standard hostsfile format.
 The entries must point to 127.0.0.1.
 E.g. 127.0.0.1 badsite.com
+.Pp
+If the entry points to a different address than the spoofing will not be done
+via NXdomain but instead return the provided IP address.
+This enables the administrator to forward specific sites to an IP address that
+might contain a warning.
+In order to spoof badsite.com to 192.168.0.1 add "192.168.0.1 badsite.com" to a
+hostsfile.
 .It Pa resolv.conf
 Standard resolv.conf file that contain the actual resolving
 nameserver and options.
