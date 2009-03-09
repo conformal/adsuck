@@ -28,6 +28,7 @@
 .Op Fl f Ar resolv.conf
 .Op Fl l Ar listen
 .Op Fl p Ar port
+.Op Fl r Ar regexfile
 .Op Fl u Ar user
 .Ar hostsfile ...
 .Ek
@@ -77,9 +78,10 @@ This is the port number that
 will bind to.
 The default is 53.
 .It Fl r Ar regexfile
-Filename of a file that contains one regex expression per line; e.g
+Filename of a file that contains one regex expression per line e.g.\&
 banner|ads|stat|track|click.
-When matched the DNS response will be spoofed.
+When the expression is matched,
+the DNS response will be spoofed.
 The regex engine runs before the hostsfile match.
 See
 .Xr regex 3
@@ -95,9 +97,9 @@ The default is _adsuck.
 Enable verbose output.
 .It Ar hostsfile
 This is a standard formatted hostsfile that contains all blacklisted entries.
-Examples of good blacklist files can be found at
-.Bd -literal
-http://rlwpx.free.fr/WPFF/hosts.htm and
+Examples of good blacklist files:
+.Bd -literal -offset indent
+http://rlwpx.free.fr/WPFF/hosts.htm
 http://www.mvps.org/winhelp2002/
 .Ed
 .El
@@ -111,10 +113,10 @@ A SIGUSR1 signal will cause it to reread all hostsfiles and regex file.
 .It Pa hostsfile
 Blacklist entries in standard hostsfile format.
 The entries must point to 127.0.0.1.
-E.g. 127.0.0.1 badsite.com
+E.g. 127.0.0.1 badsite.com.
 .Pp
-If the entry points to a different address than the spoofing will not be done
-via NXdomain but instead return the provided IP address.
+If the entry points to a different address then the spoofing will not be done
+via NXdomain but will instead return the provided IP address.
 This enables the administrator to forward specific sites to an IP address that
 might contain a warning.
 In order to spoof badsite.com to 192.168.0.1 add "192.168.0.1 badsite.com" to a
