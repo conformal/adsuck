@@ -45,7 +45,7 @@
 
 #include "adsuck.h"
 
-#define MAXLINE		(128)
+#define MAXLINE		(256)
 #define INBUF_SIZE	(4096)
 #define LOCALIP		"127.0.0.1"
 #define ADSUCK_USER	"_adsuck"
