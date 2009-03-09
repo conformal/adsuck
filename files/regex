@@ -1,2 +1,2 @@
 # example regex expression
-banner|ads|stat|track|click|adx
+banner|ads|stat[^i][^c]|track|[^u]click|adx|2o7|hitbox|count|meter
