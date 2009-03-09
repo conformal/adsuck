@@ -49,7 +49,7 @@
 #define INBUF_SIZE	(4096)
 #define LOCALIP		"127.0.0.1"
 #define ADSUCK_USER	"_adsuck"
-#define VERSION		"1.4"
+#define VERSION		"1.5"
 
 int			entries;
 int			verbose;
@@ -57,15 +57,17 @@ int			debug;
 int			debugsyslog;
 
 /* socket */
-int			sock;
+int			so;
 struct sockaddr		paddr;
 socklen_t		plen = (socklen_t) sizeof(paddr);
 
 /* resolver */
-ldns_resolver		*res;
+ldns_resolver		*resolver;
 char			*resolv_conf;
 char			*domainname;
 char			*regexfile;
+
+/* signals */
 volatile sig_atomic_t   newresolv;
 volatile sig_atomic_t   stop;
 volatile sig_atomic_t   reread;
@@ -431,7 +433,7 @@ spoofquery(struct hostnode *hn, ldns_rr *query_rr, u_int16_t id)
 			logpacket(answer_pkt);
 		}
 
-		if (sendto(sock, outbuf, answer_size, 0, &paddr, plen) == -1)
+		if (sendto(so, outbuf, answer_size, 0, &paddr, plen) == -1)
 			log_warn("spoofquery sendto");
 		else {
 			rv = 0;
@@ -490,7 +492,7 @@ forwardquery(char *hostname, ldns_rr *query_rr, u_int16_t id)
 	}
 	type = ldns_rr_get_type(query_rr);
 	clas = ldns_rr_get_class(query_rr);
-	respkt = ldns_resolver_query(res, qname, type, clas, qflags);
+	respkt = ldns_resolver_query(resolver, qname, type, clas, qflags);
 	if (respkt == NULL) {
 		log_warnx("forwardquery: no respkt");
 		goto unwind;
@@ -506,7 +508,7 @@ forwardquery(char *hostname, ldns_rr *query_rr, u_int16_t id)
 		log_warnx("can't create answer: %s",
 		    ldns_get_errorstr_by_id(status));
 	else {
-		if (sendto(sock, outbuf, answer_size, 0, &paddr, plen) == -1)
+		if (sendto(so, outbuf, answer_size, 0, &paddr, plen) == -1)
 			log_warn("forwardquery sendto");
 		else {
 			rv = 0;
@@ -537,24 +539,24 @@ setupresolver(void)
 	char			*action = "using", *es;
 	char			buf[128];
 	ldns_rdf		*dn;
-	int			i;
+	size_t			i;
 
-	if (res) {
-		ldns_resolver_free(res);
+	if (resolver) {
+		ldns_resolver_free(resolver);
 		free(domainname); /* XXX is this ok for ldns? */
-		res = NULL;
+		resolver = NULL;
 		domainname = NULL;
 		action = "rereading";
 	}
 
-	status = ldns_resolver_new_frm_file(&res, resolv_conf);
+	status = ldns_resolver_new_frm_file(&resolver, resolv_conf);
 	if (status != LDNS_STATUS_OK) {
 		asprintf(&es, "bad resolv.conf file: %s",
 			ldns_get_errorstr_by_id(status));
 		fatalx(es);
 	}
 
-	dn = ldns_resolver_domain(res);
+	dn = ldns_resolver_domain(resolver);
 	if (dn == NULL) {
 		domainname = NULL;
 		if (gethostname(buf, sizeof buf) == -1) {
@@ -782,10 +784,10 @@ main(int argc, char *argv[])
 	if ((pw = getpwnam(user)) == NULL)
 		errx(1, "unknown user %s", user);
 
-	sock =  socket(AF_INET, SOCK_DGRAM, 0);
-	if (sock == -1)
+	so = socket(AF_INET, SOCK_DGRAM, 0);
+	if (so == -1)
 		err(1, "can't open socket");
-	if (udp_bind(sock, port, listen_addr))
+	if (udp_bind(so, port, listen_addr))
 		err(1, "can't udp bind");
 
 	/* daemonize */
@@ -834,7 +836,7 @@ main(int argc, char *argv[])
 	rcount = setupregex();
 
 	while (!stop) {
-		nb = recvfrom(sock, inbuf, INBUF_SIZE, 0, &paddr, &plen);
+		nb = recvfrom(so, inbuf, INBUF_SIZE, 0, &paddr, &plen);
 		if (nb == -1) {
 			if (errno == EINTR || errno == EAGAIN) {
 				dosignals(argc, argv);
