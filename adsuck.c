@@ -49,7 +49,7 @@
 #define INBUF_SIZE	(4096)
 #define LOCALIP		"127.0.0.1"
 #define ADSUCK_USER	"_adsuck"
-#define VERSION		"1.5"
+#define VERSION		"1.6"
 
 int			entries;
 int			verbose;
@@ -80,8 +80,7 @@ struct regexnode {
 	char				*rname;
 };
 
-SIMPLEQ_HEAD(regexhead, regexnode);
-struct regexhead	rh;
+SIMPLEQ_HEAD(regexhead, regexnode) rh = SIMPLEQ_HEAD_INITIALIZER(rh);
 
 struct hostnode {
 	RB_ENTRY(hostnode)	hostentry;
@@ -251,34 +250,6 @@ addhosts(char *filename)
 }
 
 int
-rereadhosts(int argc, char *argv[])
-{
-	struct hostnode		*n, *nxt;
-
-	if (!RB_EMPTY(&hosthead)) {
-		log_info("rereading blacklist entries");
-		for (n = RB_MIN(hosttree, &hosthead); n != NULL; n = nxt) {
-			nxt = RB_NEXT(hosttree, &hosthead, n);
-			RB_REMOVE(hosttree, &hosthead, n);
-			free(n);
-			entries--;
-		}
-	}
-
-	while (argc) {
-		log_info("adding %s", argv[0]);
-
-		addhosts(argv[0]);
-		argc--;
-		argv++;
-	}
-
-	log_info("total entries: %d", entries);
-
-	return (0);
-}
-
-int
 udp_bind(int sock, u_int16_t port, char *my_address)
 {
 	struct sockaddr_in		addr;
@@ -325,7 +296,10 @@ hostnamefrompkt(ldns_pkt *pkt, ldns_rr **qrr)
 
 	if (found) {
 		rawname[i] = '\0';
-		asprintf(&name, "%s", rawname);
+		if (asprintf(&name, "%s", rawname) == -1) {
+			name = NULL;
+			goto freeraw;
+		}
 		if (qrr)
 			*qrr = query_rr;
 	}
@@ -472,6 +446,7 @@ forwardquery(char *hostname, ldns_rr *query_rr, u_int16_t id)
 	ldns_rr_class		clas;
 	ldns_status		status;
 	int			rv = 1, child = 0;
+	struct hostnode		hn;
 
 	switch (fork()) {
 	case -1:
@@ -494,7 +469,13 @@ forwardquery(char *hostname, ldns_rr *query_rr, u_int16_t id)
 	clas = ldns_rr_get_class(query_rr);
 	respkt = ldns_resolver_query(resolver, qname, type, clas, qflags);
 	if (respkt == NULL) {
-		log_warnx("forwardquery: no respkt");
+		/* dns query failed so lets spoof it instead of timing out */
+		log_warnx("forwardquery: query failed, spoofing response");
+
+		/* XXX make this tunable? */
+		hn.ipaddr = NULL;
+		hn.hostname = hostname;
+		spoofquery(&hn, query_rr, id);
 		goto unwind;
 	}
 	if (debug) {
@@ -551,8 +532,9 @@ setupresolver(void)
 
 	status = ldns_resolver_new_frm_file(&resolver, resolv_conf);
 	if (status != LDNS_STATUS_OK) {
-		asprintf(&es, "bad resolv.conf file: %s",
-			ldns_get_errorstr_by_id(status));
+		if (asprintf(&es, "bad resolv.conf file: %s",
+		    ldns_get_errorstr_by_id(status)) == -1)
+			fatal("setupresolver");
 		fatalx(es);
 	}
 
@@ -569,7 +551,8 @@ setupresolver(void)
 
 			if (buf[i] == '.' && strlen(buf) > 1) {
 				i++;
-				asprintf(&domainname, "%s", &buf[i]);
+				if (asprintf(&domainname, "%s", &buf[i]) == -1)
+					fatal("setupresolver");
 			}
 		}
 	} else {
@@ -605,6 +588,43 @@ freeregex(void)
 	SIMPLEQ_INIT(&rh);
 }
 
+void
+freerb(void)
+{
+	struct hostnode		*n, *nxt;
+
+	if (RB_EMPTY(&hosthead))
+		return;
+
+	for (n = RB_MIN(hosttree, &hosthead); n != NULL; n = nxt) {
+		nxt = RB_NEXT(hosttree, &hosthead, n);
+		RB_REMOVE(hosttree, &hosthead, n);
+		free(n);
+		entries--;
+	}
+	RB_INIT(&hosthead);
+}
+
+int
+rereadhosts(int argc, char *argv[])
+{
+	freerb();
+
+	log_info("rereading blacklist entries");
+
+	while (argc) {
+		log_info("adding %s", argv[0]);
+
+		addhosts(argv[0]);
+		argc--;
+		argv++;
+	}
+
+	log_info("total entries: %d", entries);
+
+	return (0);
+}
+
 int
 setupregex(void)
 {
@@ -613,8 +633,7 @@ setupregex(void)
 	int			i = 0, rv;
 	struct regexnode	*n;
 
-	if (!SIMPLEQ_EMPTY(&rh))
-		freeregex();
+	freeregex();
 
 	if (regexfile == NULL)
 		return (0);
@@ -832,7 +851,6 @@ main(int argc, char *argv[])
 	rereadhosts(argc, argv);
 
 	/* regex */
-	SIMPLEQ_INIT(&rh);
 	rcount = setupregex();
 
 	while (!stop) {
@@ -859,6 +877,8 @@ main(int argc, char *argv[])
 
 		bzero(&hostn, sizeof hostn);
 		hostn.hostname = hostnamefrompkt(query_pkt, &query_rr);
+		if (hostn.hostname == NULL)
+			continue; /* maybe this should be fatal */
 		id = ldns_pkt_id(query_pkt);
 		if (domainname &&
 		    (s = strstr(hostn.hostname, domainname)) != NULL) {
@@ -867,7 +887,8 @@ main(int argc, char *argv[])
 			 * without domain name; this is to work around
 			 * software that tries to be smart about domain names
 			 */
-			asprintf(&h.hostname, "%s", hostn.hostname);
+			if (asprintf(&h.hostname, "%s", hostn.hostname) == -1)
+				fatal("hostname");
 			h.hostname[s - hostn.hostname - 1] = '\0';
 			if (runregex(h.hostname) == 0)
 				spoofquery(&hostn, query_rr, id);
@@ -891,6 +912,7 @@ main(int argc, char *argv[])
 	}
 
 	freeregex();
+	freerb();
 
 	log_info("exiting");
 
