@@ -34,6 +34,7 @@
 #include <sys/tree.h>
 #include <sys/queue.h>
 #else
+#include <linux/limits.h>
 #include "linux/tree.h"
 #include "linux/queue.h"
 #endif
