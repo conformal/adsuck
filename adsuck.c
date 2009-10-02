@@ -50,7 +50,7 @@
 #define INBUF_SIZE	(4096)
 #define LOCALIP		"127.0.0.1"
 #define ADSUCK_USER	"_adsuck"
-#define VERSION		"1.6"
+#define VERSION		"1.7"
 
 int			entries;
 int			verbose;
@@ -101,6 +101,8 @@ RB_GENERATE(hosttree, hostnode, hostentry, rb_strcmp)
 void
 sighdlr(int sig)
 {
+	pid_t			pid;
+
 	switch (sig) {
 	case SIGINT:
 	case SIGTERM:
@@ -110,8 +112,9 @@ sighdlr(int sig)
 		newresolv = 1;
 		break;
 	case SIGCHLD:
-		while (waitpid(WAIT_ANY, NULL, WNOHANG) != -1) /* sig safe */
-			;
+		while ((pid = waitpid(WAIT_ANY, NULL, WNOHANG)) != -1)
+			if (pid <= 0)
+				break;
 		break;
 	case SIGUSR1:
 		reread = 1;
