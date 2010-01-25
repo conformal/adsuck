@@ -50,7 +50,7 @@
 #define INBUF_SIZE	(4096)
 #define LOCALIP		"127.0.0.1"
 #define ADSUCK_USER	"_adsuck"
-#define VERSION		"1.7"
+#define VERSION		"1.8"
 
 int			entries;
 int			verbose;
@@ -828,7 +828,7 @@ main(int argc, char *argv[])
 	if (cdir == NULL)
 		cdir = pw->pw_dir;
 	if (stat(cdir, &stb) == -1)
-		fatal("stat");
+		fatal("invalid chroot directory");
 	if (stb.st_uid != 0 || (stb.st_mode & (S_IWGRP | S_IWOTH)) != 0)
 		fatalx("bad privsep dir permissions");
 	if (chroot(cdir) == -1)
