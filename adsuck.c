@@ -102,20 +102,36 @@ void
 sighdlr(int sig)
 {
 	pid_t			pid;
-	int			save_errno = errno;
+	int			save_errno = errno, status;
 
 	switch (sig) {
 	case SIGINT:
 	case SIGTERM:
+	case SIGQUIT:
 		stop = 1;
 		break;
 	case SIGHUP:
 		newresolv = 1;
 		break;
 	case SIGCHLD:
-		while ((pid = waitpid(WAIT_ANY, NULL, WNOHANG)) != -1)
-			if (pid <= 0)
+		while ((pid = waitpid(WAIT_ANY, &status, WNOHANG)) != 0) {
+			if (pid == -1) {
+				if (errno == EINTR)
+					continue;
+				if (errno != ECHILD) {
+					/* waitpid */
+				}
 				break;
+			}
+
+			if (WIFEXITED(status)) {
+				if (WEXITSTATUS(status) != 0) {
+					/* child exit status bad */
+				}
+			} else {
+				/* child is terminated abnormally */
+			}
+		}
 		break;
 	case SIGUSR1:
 		reread = 1;
@@ -765,6 +781,7 @@ main(int argc, char *argv[])
 	char			*user = ADSUCK_USER, *s;
 	char			*cdir = NULL;
 	int			foreground = 0, rcount = 0;
+	struct sigaction	sact;
 
 	log_init(1);		/* log to stderr until daemonized */
 
@@ -849,10 +866,18 @@ main(int argc, char *argv[])
 		fatal("can't drop privileges");
 
 	/* signaling */
-	installsignal(SIGCHLD, "CHLD");
-	installsignal(SIGTERM, "TERM");
-	installsignal(SIGUSR1, "USR1");
-	installsignal(SIGHUP, "HUP");
+	bzero(&sact, sizeof(sact));
+	sigemptyset(&sact.sa_mask);
+	sact.sa_flags = 0;
+	sact.sa_handler = sighdlr;
+	sigaction(SIGINT, &sact, NULL);
+	sigaction(SIGQUIT, &sact, NULL);
+	sigaction(SIGTERM, &sact, NULL);
+	sigaction(SIGUSR1, &sact, NULL);
+	sigaction(SIGHUP, &sact, NULL);
+
+	sact.sa_flags = SA_NOCLDSTOP;
+	sigaction(SIGCHLD, &sact, NULL);
 
 	/* external resolver */
 	setupresolver();
