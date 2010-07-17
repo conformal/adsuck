@@ -102,6 +102,7 @@ void
 sighdlr(int sig)
 {
 	pid_t			pid;
+	int			save_errno = errno;
 
 	switch (sig) {
 	case SIGINT:
@@ -120,6 +121,8 @@ sighdlr(int sig)
 		reread = 1;
 		break;
 	}
+
+	errno = save_errno;
 }
 
 void
@@ -466,7 +469,11 @@ forwardquery(char *hostname, ldns_rr *query_rr, u_int16_t id)
 
 	qname = ldns_dname_new_frm_str(hostname);
 	if (!qname) {
-		log_warnx("forwardquery: can't make qname");
+		log_debug("forwardquery: can't make qname, spoofing response");
+
+		hn.ipaddr = NULL;
+		hn.hostname = hostname;
+		spoofquery(&hn, query_rr, id);
 		goto unwind;
 	}
 	type = ldns_rr_get_type(query_rr);
@@ -474,9 +481,8 @@ forwardquery(char *hostname, ldns_rr *query_rr, u_int16_t id)
 	respkt = ldns_resolver_query(resolver, qname, type, clas, qflags);
 	if (respkt == NULL) {
 		/* dns query failed so lets spoof it instead of timing out */
-		log_warnx("forwardquery: query failed, spoofing response");
+		log_debug("forwardquery: query failed, spoofing response");
 
-		/* XXX make this tunable? */
 		hn.ipaddr = NULL;
 		hn.hostname = hostname;
 		spoofquery(&hn, query_rr, id);
@@ -881,10 +887,11 @@ main(int argc, char *argv[])
 
 		bzero(&hostn, sizeof hostn);
 		hostn.hostname = hostnamefrompkt(query_pkt, &query_rr);
-		if (hostn.hostname == NULL)
-			continue; /* maybe this should be fatal */
 		id = ldns_pkt_id(query_pkt);
-		if (domainname &&
+		if (hostn.hostname == NULL || !strcmp(hostn.hostname, "")) {
+			/* if we have an invalid hostname forward it */
+			forwardquery(hostn.hostname, query_rr, id);
+		} else if (domainname &&
 		    (s = strstr(hostn.hostname, domainname)) != NULL) {
 			/*
 			 * if we are in our own domain strip it of and try
@@ -911,7 +918,8 @@ main(int argc, char *argv[])
 				forwardquery(hostn.hostname, query_rr, id);
 		}
 
-		free(hostn.hostname);
+		if (hostn.hostname)
+			free(hostn.hostname);
 		ldns_pkt_free(query_pkt);
 	}
 
