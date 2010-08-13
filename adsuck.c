@@ -408,7 +408,7 @@ spoofquery(struct hostnode *hn, ldns_rr *query_rr, u_int16_t id)
 	answer_pkt = ldns_pkt_new();
 	if (answer_pkt == NULL)
 		goto unwind;
-	
+
 	ldns_pkt_set_qr(answer_pkt, 1);
 	ldns_pkt_set_aa(answer_pkt, 1);
 	ldns_pkt_set_id(answer_pkt, id);
