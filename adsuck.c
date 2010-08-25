@@ -910,18 +910,11 @@ main(int argc, char *argv[])
 				logpacket(query_pkt);
 			}
 
-		n = NULL;
 		bzero(&hostn, sizeof hostn);
 		hostn.hostname = hostnamefrompkt(query_pkt, &query_rr);
 		id = ldns_pkt_id(query_pkt);
 		if (hostn.hostname == NULL || !strcmp(hostn.hostname, "")) {
-			/*
-			 * if we have an invalid hostname spoof it
-			 * webkit does this nonsense
-			 */
-			spoofquery(&hostn, query_rr, id);
-		} else if (domainname && !strcmp(hostn.hostname, domainname)) {
-			/* looking up own domain */
+			/* if we have an invalid hostname forward it */
 			forwardquery(hostn.hostname, query_rr, id);
 		} else if (domainname &&
 		    (s = strstr(hostn.hostname, domainname)) != NULL) {
@@ -930,29 +923,16 @@ main(int argc, char *argv[])
 			 * without domain name; this is to work around
 			 * software that tries to be smart about domain names
 			 */
-			if (s == hostn.hostname) {
-				/*
-				 * some app is prepending the domain name
-				 * in front of some other garbage, makes no
-				 * sense
-				 */
+			if (asprintf(&h.hostname, "%s", hostn.hostname) == -1)
+				fatal("hostname");
+			h.hostname[s - hostn.hostname - 1] = '\0';
+			if (runregex(h.hostname) == 0)
 				spoofquery(&hostn, query_rr, id);
-			} else {
-				/*
-				 * hostname in front of own domain so apply
-				 * regular rules
-				 */
-				if (asprintf(&h.hostname, "%s", hostn.hostname) == -1)
-					fatal("hostname");
-				h.hostname[s - hostn.hostname - 1] = '\0';
-				if (runregex(h.hostname) == 0)
-					spoofquery(&hostn, query_rr, id);
-				else if ((n = RB_FIND(hosttree, &hosthead, &h)) != NULL)
-					spoofquery(n, query_rr, id);
-				else
-					forwardquery(hostn.hostname, query_rr, id);
-				free(h.hostname);
-			}
+			else if ((n = RB_FIND(hosttree, &hosthead, &h)) != NULL)
+				spoofquery(n, query_rr, id);
+			else
+				forwardquery(hostn.hostname, query_rr, id);
+			free(h.hostname);
 		} else {
 			/* not in our domain */
 			if (runregex(hostn.hostname) == 0)
@@ -962,6 +942,7 @@ main(int argc, char *argv[])
 			else
 				forwardquery(hostn.hostname, query_rr, id);
 		}
+
 		if (hostn.hostname)
 			free(hostn.hostname);
 		ldns_pkt_free(query_pkt);
