@@ -1,5 +1,9 @@
 # $adsuck$
 
+PREFIX?=/usr/local
+BINDIR=${PREFIX}/sbin
+MANDIR= ${PREFIX}/man/cat
+
 PROG=adsuck
 MAN=adsuck.8
 
