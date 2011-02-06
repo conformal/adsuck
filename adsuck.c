@@ -50,7 +50,7 @@
 #define INBUF_SIZE	(4096)
 #define LOCALIP		"127.0.0.1"
 #define ADSUCK_USER	"_adsuck"
-#define VERSION		"1.9"
+#define VERSION		"2.0"
 
 int			entries;
 int			verbose;
@@ -60,7 +60,7 @@ int			debugsyslog;
 /* socket */
 int			so;
 struct sockaddr		paddr;
-socklen_t		plen = (socklen_t) sizeof(paddr);
+socklen_t		plen = (socklen_t)sizeof(paddr);
 
 /* resolver */
 ldns_resolver		*resolver;
@@ -88,15 +88,30 @@ struct hostnode {
 	char			*hostname;
 	char			*ipaddr;
 };
+RB_HEAD(hosttree, hostnode) hosthead = RB_INITIALIZER(&hosthead);
+
+struct cachenode {
+	RB_ENTRY(cachenode)	cacheentry;
+	char			*question;
+	ldns_pkt		*respkt;
+	time_t			expires;
+};
+RB_HEAD(cachetree, cachenode) cachehead = RB_INITIALIZER(&cachehead);
 
 int
-rb_strcmp(struct hostnode *d1, struct hostnode *d2)
+rb_hostnode_strcmp(struct hostnode *d1, struct hostnode *d2)
 {
 	return (strcmp(d1->hostname, d2->hostname));
 }
 
-RB_HEAD(hosttree, hostnode) hosthead = RB_INITIALIZER(&hosthead);
-RB_GENERATE(hosttree, hostnode, hostentry, rb_strcmp)
+int
+rb_cachenode_strcmp(struct cachenode *d1, struct cachenode *d2)
+{
+	return (strcmp(d1->question, d2->question));
+}
+
+RB_GENERATE(hosttree, hostnode, hostentry, rb_hostnode_strcmp)
+RB_GENERATE(cachetree, cachenode, cacheentry, rb_cachenode_strcmp)
 
 void
 sighdlr(int sig)
@@ -146,11 +161,11 @@ logpacket(ldns_pkt *pkt)
 {
 	char			*str = ldns_pkt2str(pkt);
 
-	if (str)
+	if (str) {
 		log_debug("%s", str);
-	else
+		LDNS_FREE(str);
+	} else
 		log_warnx("could not convert packet to string");
-	LDNS_FREE(str);
 }
 
 int
@@ -244,7 +259,7 @@ addhosts(char *filename)
 
 
 		/* we got one! */
-		len = strlen(host) + 1;
+		len = strlen(host) + 2;
 		if (strcmp(LOCALIP, ip))
 			len += strlen(ip) + 1;
 		else
@@ -255,9 +270,9 @@ addhosts(char *filename)
 			fatal("not enough memory");
 
 		hostn->hostname = (char *)(hostn + 1);
-		strlcpy(hostn->hostname, host, strlen(host) + 1);
+		snprintf(hostn->hostname, strlen(host) + 2, "%s.", host);
 		if (ip) {
-			hostn->ipaddr = hostn->hostname + strlen(host) + 1;
+			hostn->ipaddr = hostn->hostname + strlen(host) + 2;
 			strlcpy(hostn->ipaddr, ip, strlen(ip) + 1);
 		} else
 			hostn->ipaddr = NULL;
@@ -266,6 +281,7 @@ addhosts(char *filename)
 		else
 			newentry++;
 	}
+
 	if (verbose)
 		log_info("added entries: %d", newentry);
 	entries += newentry;
@@ -293,43 +309,44 @@ char *
 hostnamefrompkt(ldns_pkt *pkt, ldns_rr **qrr)
 {
 	ldns_rr			*query_rr;
-	char			*name = NULL, *rawname = NULL;
-	ssize_t			len;
-	int			i, found;
+	ldns_buffer		*out = NULL;
+	ldns_rdf		*rdf;
+	char			*ret = NULL;
 
 	if (pkt == NULL)
 		return (NULL);
 
 	query_rr = ldns_rr_list_rr(ldns_pkt_question(pkt), 0);
-	rawname = ldns_rr2str(query_rr);
-	if (rawname == NULL)
+	if (query_rr == NULL) {
+		log_warnx("hostnamefrompkt invalid parameters");
 		goto done;
-
-	len = strlen(rawname);
-	if (len <= 2)
-		goto freeraw;
-	len -= 2;
-
-	/* strip off everything past last .*/
-	for (i = 0, found = 0; i < len; i++)
-		if (rawname[i] == '.' && isblank(rawname[i + 1])) {
-			found = 1;
-			break;
-		}
-
-	if (found) {
-		rawname[i] = '\0';
-		if (asprintf(&name, "%s", rawname) == -1) {
-			name = NULL;
-			goto freeraw;
-		}
-		if (qrr)
-			*qrr = query_rr;
 	}
-freeraw:
-	free(rawname);
+
+	out = ldns_buffer_new(LDNS_MAX_DOMAINLEN);
+	if (out == NULL) {
+		log_warnx("no memory for out buffer");
+		goto done;
+	}
+
+	rdf = ldns_rr_owner(query_rr);
+	if (ldns_rdf2buffer_str_dname(out, rdf) != LDNS_STATUS_OK) {
+		log_warnx("can't get hostname");
+		goto done;
+	}
+
+	ret = strdup(ldns_buffer_begin(out));
+	if (ret == NULL) {
+		log_warn("no memory for hostname");
+		goto done;
+	}
+
+	if (qrr)
+		*qrr = query_rr;
 done:
-	return (name);
+	if (out)
+		ldns_buffer_free(out);
+
+	return (ret);
 }
 
 int
@@ -367,7 +384,7 @@ spoofquery(struct hostnode *hn, ldns_rr *query_rr, u_int16_t id)
 	/* if we have an ip spoof it there */
 	if (ipaddr) {
 		/* an */
-		snprintf(buf, sizeof buf, "%s.\t%d\tIN\tA\t%s",
+		snprintf(buf, sizeof buf, "%s\t%d\tIN\tA\t%s",
 		    hostname, 259200, ipaddr);
 		status = ldns_rr_new_frm_str(&myrr, buf, 0, NULL, &prev);
 		if (status != LDNS_STATUS_OK) {
@@ -380,7 +397,7 @@ spoofquery(struct hostnode *hn, ldns_rr *query_rr, u_int16_t id)
 		prev = NULL;
 
 		/* ns */
-		snprintf(buf, sizeof buf, "%s.\t%d\tIN\tNS\t127.0.0.1.",
+		snprintf(buf, sizeof buf, "%s\t%d\tIN\tNS\t127.0.0.1.",
 		    hostname, 259200);
 		status = ldns_rr_new_frm_str(&myaurr, buf, 0, NULL, &prev);
 		if (status != LDNS_STATUS_OK) {
@@ -458,18 +475,130 @@ unwind:
 }
 
 int
-forwardquery(char *hostname, ldns_rr *query_rr, u_int16_t id)
+send_response(char *hostname, ldns_pkt *respkt, uint16_t id)
 {
 	size_t			answer_size;
-	u_int16_t		qflags = LDNS_RD;
+	ldns_status		status;
 	uint8_t			*outbuf = NULL;
+	int			rv = 1;
+
+	if (hostname == NULL || respkt == NULL) {
+		log_warnx("send_response: invalid parameters");
+		return (NULL);
+	}
+
+	ldns_pkt_set_id(respkt, id);
+	status = ldns_pkt2wire(&outbuf, respkt, &answer_size);
+	if (status != LDNS_STATUS_OK)
+		log_warnx("can't create answer: %s",
+		    ldns_get_errorstr_by_id(status));
+	else {
+		if (sendto(so, outbuf, answer_size, 0, &paddr, plen) == -1)
+			log_warn("send_response: sendto");
+		else {
+			rv = 0;
+			if (verbose)
+				log_info("send_response: resolved %s", hostname);
+		}
+	}
+
+	if (outbuf)
+		LDNS_FREE(outbuf);
+
+	return (rv);
+}
+
+struct cachenode *
+check_cache(ldns_rr *query_rr, u_int16_t id)
+{
+	struct cachenode	cn, *c = NULL;
+
+	if (query_rr == NULL) {
+		log_warnx("check_cache: invalid parameters");
+		return (NULL);
+	}
+
+	cn.question= ldns_rr2str(query_rr);
+	if ((c = RB_FIND(cachetree, &cachehead, &cn)) != NULL) {
+		if (c->expires - time(NULL) < 0) {
+			/* entry has expired */
+			RB_REMOVE(cachetree, &cachehead, c);
+			LDNS_FREE(c->question);
+			ldns_pkt_free(c->respkt);
+			free(c);
+			c = NULL;
+			goto done;
+		}
+
+		/* found it! */
+		return (c);
+	}
+
+done:
+	if (cn.question)
+		LDNS_FREE(cn.question);
+
+	return (c);
+}
+
+time_t
+get_ttl(char *hostname, ldns_pkt *respkt)
+{
+	ldns_rr_list		*rrl;
+	ldns_rr			*rr;
+	ldns_rdf		*rdf;
+	int			i;
+	ldns_buffer		*out = NULL;
+	time_t			expires = 0;
+
+	if (hostname == NULL || respkt == NULL) {
+		log_warnx("get_ttl: invalid parameters");
+		return (0);
+	}
+
+	rrl = ldns_pkt_answer(respkt);
+	out = ldns_buffer_new(LDNS_MAX_DOMAINLEN);
+	if (out == NULL) {
+		log_warnx("can't allocate buffer");
+		goto done;
+	}
+
+	for (i = 0; i < ldns_rr_list_rr_count(rrl); i++) {
+		rr = ldns_rr_list_rr(rrl, i);
+		rdf = ldns_rr_owner(rr);
+		if (ldns_rdf2buffer_str_dname(out, rdf) != LDNS_STATUS_OK) {
+			log_warnx("can't get dname");
+			goto done;
+		}
+
+		if (!strcmp(hostname, ldns_buffer_begin(out))) {
+			/* this is the domain we were looking for */
+			expires = time(NULL) + ldns_rr_ttl(rr);
+			break;
+		}
+		ldns_buffer_clear(out);
+	}
+
+done:
+	if (out)
+		ldns_buffer_free(out);
+
+	return (expires);
+}
+
+int
+forwardquery(char *hostname, ldns_rr *query_rr, u_int16_t id)
+{
+	u_int16_t		qflags = LDNS_RD;
 	ldns_rdf		*qname = NULL;
 	ldns_pkt		*respkt = NULL;
 	ldns_rr_type		type;
 	ldns_rr_class		clas;
-	ldns_status		status;
-	int			rv = 1, child = 0;
+	int			rv = 1, child = 0, childrv = 0;
 	struct hostnode		hn;
+	struct cachenode	*c;
+
+	c = check_cache(query_rr,  id);
 
 	switch (fork()) {
 	case -1:
@@ -481,6 +610,14 @@ forwardquery(char *hostname, ldns_rr *query_rr, u_int16_t id)
 		break;
 	default:
 		return (0);
+	}
+
+	if (c) {
+		if (send_response(hostname, c->respkt, id)) {
+			log_warnx("send_response cached");
+			childrv = 1;
+		}
+		goto exitchild;
 	}
 
 	qname = ldns_dname_new_frm_str(hostname);
@@ -504,37 +641,55 @@ forwardquery(char *hostname, ldns_rr *query_rr, u_int16_t id)
 		spoofquery(&hn, query_rr, id);
 		goto unwind;
 	}
-	if (debug) {
-		log_info("forwardquery response:");
-		logpacket(respkt);
-	}
+#if 0
+	time_t			expires = 0;
+	struct cachenode	*cachen;
 
-	ldns_pkt_set_id(respkt, id);
-	status = ldns_pkt2wire(&outbuf, respkt, &answer_size);
-	if (status != LDNS_STATUS_OK)
-		log_warnx("can't create answer: %s",
-		    ldns_get_errorstr_by_id(status));
-	else {
-		if (sendto(so, outbuf, answer_size, 0, &paddr, plen) == -1)
-			log_warn("forwardquery sendto");
-		else {
-			rv = 0;
-			if (verbose)
-				log_info("forwardquery: resolved %s",
-				    hostname);
+	if ((expires = get_ttl(hostname, respkt)) != 0) {
+		cachen = calloc(1, sizeof *cachen);
+		if (cachen == NULL) {
+			log_warn("no memory for cache record");
+			goto unwind;
+		}
+
+		cachen->respkt = ldns_pkt_clone(respkt);
+		if (cachen->respkt == NULL) {
+			log_warn("no memory to cache packet");
+			free(cachen);
+			goto unwind;
+		}
+
+		cachen->question = ldns_rr2str(query_rr);
+		if (cachen->question == NULL) {
+			log_warn("no memory to cache question");
+			ldns_pkt_free(cachen->respkt);
+			free(cachen);
+			goto unwind;
+		}
+
+		cachen->expires = expires;
+		if (RB_INSERT(cachetree, &cachehead, cachen)) {
+			/* this shouldn't happen */
+			log_debug("already caching %s", hostname);
+			LDNS_FREE(cachen->question);
+			ldns_pkt_free(cachen->respkt);
+			free(cachen);
+		} else {
+			if (debug)
+				log_debug("caching %s", hostname);
 		}
 	}
-
+#endif
+	if (send_response(hostname, respkt, id))
+		log_warnx("send_reponse uncached");
 unwind:
 	if (respkt)
 		ldns_pkt_free(respkt);
-	if (outbuf)
-		LDNS_FREE(outbuf);
 	if (qname)
 		ldns_rdf_free(qname);
-
+exitchild:
 	if (child)
-		_exit(0);
+		_exit(childrv);
 
 	return (rv);
 }
@@ -550,7 +705,7 @@ setupresolver(void)
 
 	if (resolver) {
 		ldns_resolver_free(resolver);
-		free(domainname); /* XXX is this ok for ldns? */
+		LDNS_FREE(domainname);
 		resolver = NULL;
 		domainname = NULL;
 		action = "rereading";
