@@ -534,6 +534,83 @@ done:
 	return (expires);
 }
 
+/* read in parent */
+void
+event_pipe(int fd, short sig, void *args)
+{
+	struct event		*ev = args;
+	uint8_t			wire_pkt[LDNS_MAX_PACKETLEN];
+	size_t			rd;
+	ldns_pkt		*respkt = NULL;
+	char			*hostname = NULL;
+
+	if ((rd = read(fd, wire_pkt, sizeof wire_pkt)) == -1)
+		log_warn("can't read from pipe");
+	else {
+		//fprintf(stderr, "rd %zd\n", rd);
+		if (ldns_wire2pkt(&respkt, wire_pkt, rd) != LDNS_STATUS_OK) {
+			log_warnx("can't convert wire packet to struct");
+			goto done;
+		}
+
+
+		time_t			expires = 0;
+		struct cachenode	*cachen;
+		ldns_rr			*query_rr;
+
+		hostname = hostnamefrompkt(respkt, &query_rr);
+		if ((expires = get_ttl(hostname, respkt)) != 0) {
+			cachen = calloc(1, sizeof *cachen);
+			if (cachen == NULL) {
+				log_warn("no memory for cache record");
+				errx(1, "boom");
+			}
+
+			cachen->respkt = respkt;
+			respkt = NULL;
+			if (cachen->respkt == NULL) {
+				log_warn("no memory to cache packet");
+				free(cachen);
+				errx(1, "boom");
+			}
+
+			cachen->question = ldns_rr2str(query_rr);
+			if (cachen->question == NULL) {
+				log_warn("no memory to cache question");
+				ldns_pkt_free(cachen->respkt);
+				free(cachen);
+				errx(1, "boom");
+			}
+
+			cachen->expires = expires;
+			if (RB_INSERT(cachetree, &cachehead, cachen)) {
+				/* this shouldn't happen */
+				log_debug("already caching %s", hostname);
+				LDNS_FREE(cachen->question);
+				ldns_pkt_free(cachen->respkt);
+				free(cachen);
+			} else {
+				if (debug)
+					log_debug("caching %s", hostname);
+			}
+		}
+
+
+
+
+	}
+done:
+	if (respkt)
+		ldns_pkt_free(respkt);
+	if (hostname)
+		LDNS_FREE(hostname);
+	close(fd);
+	if (ev) {
+		event_del(ev);
+		free(ev);
+	}
+}
+
 int
 forwardquery(char *hostname, ldns_rr *query_rr, u_int16_t id)
 {
@@ -545,8 +622,22 @@ forwardquery(char *hostname, ldns_rr *query_rr, u_int16_t id)
 	int			rv = 1, child = 0, childrv = 0;
 	struct hostnode		hn;
 	struct cachenode	*c;
+	int			*fildes = NULL;
+	int			cached = 0;
 
 	c = check_cache(query_rr,  id);
+	if (c == NULL) {
+		fildes = malloc(sizeof(int[2]));
+		if (fildes == NULL) {
+			log_warnx("can't get memory for pipe");
+			goto unwind;
+		}
+		if (pipe(fildes) == -1) {
+			log_warnx("can't create pipe");
+			goto unwind;
+		}
+	} else
+		cached = 1;
 
 	switch (fork()) {
 	case -1:
@@ -557,9 +648,26 @@ forwardquery(char *hostname, ldns_rr *query_rr, u_int16_t id)
 		signal_del(&evchild);
 		signal_del(&evusr1);
 		signal_del(&evhup);
+
+		/* close read end */
+		if (fildes)
+			close(fildes[0]);
 		child = 1;
 		break;
 	default:
+		/* close write end */
+		if (cached)
+			return (0);
+
+		if (fildes)
+			close(fildes[1]);
+		struct event *evp = malloc(sizeof *evp);
+		if (evp == NULL) {
+			log_warn("no memory for parent event");
+			return (1);
+		}
+		event_set(evp, fildes[0], EV_READ | EV_PERSIST, event_pipe, evp);
+		event_add(evp, NULL);
 		return (0);
 	}
 
@@ -591,6 +699,26 @@ forwardquery(char *hostname, ldns_rr *query_rr, u_int16_t id)
 		hn.hostname = hostname;
 		spoofquery(&hn, query_rr, id);
 		goto unwind;
+	}
+
+	if (fildes) {
+		size_t			answer_size;
+		ldns_status		status;
+		uint8_t			*outbuf = NULL;
+
+		status = ldns_pkt2wire(&outbuf, respkt, &answer_size);
+		if (status != LDNS_STATUS_OK)
+			log_warnx("can't create answer: %s",
+			    ldns_get_errorstr_by_id(status));
+		else {
+			if (write(fildes[1], outbuf, answer_size) != answer_size) {
+				log_warn("can't write question to parent");
+				goto unwind;
+			}
+		}
+
+		if (outbuf)
+			LDNS_FREE(outbuf);
 	}
 #if 0
 	time_t			expires = 0;
@@ -639,6 +767,8 @@ unwind:
 	if (qname)
 		ldns_rdf_free(qname);
 exitchild:
+	if (fildes)
+		close(fildes[1]); /* close write end */
 	if (child)
 		_exit(childrv);
 
@@ -845,7 +975,7 @@ void
 sighdlr(int sig, short flags, void *args)
 {
 	pid_t			pid;
-	int			save_errno = errno, status;
+	int			status;
 	struct ev_args		*a = args;
 
 	switch (sig) {
@@ -882,8 +1012,6 @@ sighdlr(int sig, short flags, void *args)
 		setupregex();
 		break;
 	}
-
-	errno = save_errno;
 }
 
 void
