@@ -12,6 +12,6 @@ COPT+= -O2
 DEBUG+= -ggdb3 
 CFLAGS+= -Wall
 CFLAGS+= -I/usr/local/include
-LDFLAGS+= -L/usr/local/lib -lldns
+LDFLAGS+= -L/usr/local/lib -lldns -levent
 
 .include <bsd.prog.mk>

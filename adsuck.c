@@ -21,7 +21,6 @@
 #include <ctype.h>
 #include <err.h>
 #include <unistd.h>
-#include <signal.h>
 #include <pwd.h>
 #include <regex.h>
 
@@ -43,6 +42,7 @@
 #include <sys/wait.h>
 
 #include <ldns/ldns.h>
+#include <event.h>
 
 #include "adsuck.h"
 
@@ -51,6 +51,20 @@
 #define LOCALIP		"127.0.0.1"
 #define ADSUCK_USER	"_adsuck"
 #define VERSION		"2.0"
+
+struct ev_args {
+	char		**argv;
+	int		argc;
+};
+
+/* event signals */
+struct event		evmain;
+struct event		evint;
+struct event		evquit;
+struct event		evterm;
+struct event		evusr1;
+struct event		evhup;
+struct event		evchild;
 
 int			entries;
 int			verbose;
@@ -67,11 +81,6 @@ ldns_resolver		*resolver;
 char			*resolv_conf;
 char			*domainname;
 char			*regexfile;
-
-/* signals */
-volatile sig_atomic_t   newresolv;
-volatile sig_atomic_t   stop;
-volatile sig_atomic_t   reread;
 
 extern char		*__progname;
 
@@ -112,49 +121,6 @@ rb_cachenode_strcmp(struct cachenode *d1, struct cachenode *d2)
 
 RB_GENERATE(hosttree, hostnode, hostentry, rb_hostnode_strcmp)
 RB_GENERATE(cachetree, cachenode, cacheentry, rb_cachenode_strcmp)
-
-void
-sighdlr(int sig)
-{
-	pid_t			pid;
-	int			save_errno = errno, status;
-
-	switch (sig) {
-	case SIGINT:
-	case SIGTERM:
-	case SIGQUIT:
-		stop = 1;
-		break;
-	case SIGHUP:
-		newresolv = 1;
-		break;
-	case SIGCHLD:
-		while ((pid = waitpid(WAIT_ANY, &status, WNOHANG)) != 0) {
-			if (pid == -1) {
-				if (errno == EINTR)
-					continue;
-				if (errno != ECHILD) {
-					/* waitpid */
-				}
-				break;
-			}
-
-			if (WIFEXITED(status)) {
-				if (WEXITSTATUS(status) != 0) {
-					/* child exit status bad */
-				}
-			} else {
-				/* child is terminated abnormally */
-			}
-		}
-		break;
-	case SIGUSR1:
-		reread = 1;
-		break;
-	}
-
-	errno = save_errno;
-}
 
 void
 logpacket(ldns_pkt *pkt)
@@ -350,6 +316,40 @@ done:
 }
 
 int
+send_response(char *hostname, ldns_pkt *respkt, uint16_t id)
+{
+	size_t			answer_size;
+	ldns_status		status;
+	uint8_t			*outbuf = NULL;
+	int			rv = 1;
+
+	if (hostname == NULL || respkt == NULL) {
+		log_warnx("send_response: invalid parameters");
+		return (NULL);
+	}
+
+	ldns_pkt_set_id(respkt, id);
+	status = ldns_pkt2wire(&outbuf, respkt, &answer_size);
+	if (status != LDNS_STATUS_OK)
+		log_warnx("can't create answer: %s",
+		    ldns_get_errorstr_by_id(status));
+	else {
+		if (sendto(so, outbuf, answer_size, 0, &paddr, plen) == -1)
+			log_warn("send_response: sendto");
+		else {
+			rv = 0;
+			if (verbose)
+				log_info("send_response: resolved %s", hostname);
+		}
+	}
+
+	if (outbuf)
+		LDNS_FREE(outbuf);
+
+	return (rv);
+}
+
+int
 spoofquery(struct hostnode *hn, ldns_rr *query_rr, u_int16_t id)
 {
 	ldns_status		status;
@@ -361,7 +361,6 @@ spoofquery(struct hostnode *hn, ldns_rr *query_rr, u_int16_t id)
 	ldns_rr			*myrr = NULL, *myaurr = NULL;
 	ldns_rdf		*prev = NULL;
 	char			buf[MAXLINE * 2];
-	size_t			answer_size;
 	uint8_t			*outbuf = NULL;
 	int			rv = 1;
 	char			*ipaddr = NULL, *hostname = NULL;
@@ -428,7 +427,6 @@ spoofquery(struct hostnode *hn, ldns_rr *query_rr, u_int16_t id)
 
 	ldns_pkt_set_qr(answer_pkt, 1);
 	ldns_pkt_set_aa(answer_pkt, 1);
-	ldns_pkt_set_id(answer_pkt, id);
 	if (ipaddr == NULL)
 		ldns_pkt_set_rcode(answer_pkt, LDNS_RCODE_NXDOMAIN);
 
@@ -437,25 +435,9 @@ spoofquery(struct hostnode *hn, ldns_rr *query_rr, u_int16_t id)
 	ldns_pkt_push_rr_list(answer_pkt, LDNS_SECTION_AUTHORITY, answer_ns);
 	ldns_pkt_push_rr_list(answer_pkt, LDNS_SECTION_ADDITIONAL, answer_ad);
 
-	status = ldns_pkt2wire(&outbuf, answer_pkt, &answer_size);
-	if (status != LDNS_STATUS_OK)
-		log_warnx("can't create answer: %s",
-		    ldns_get_errorstr_by_id(status));
-	else {
-		if (debug) {
-			log_debug("spoofquery response:");
-			logpacket(answer_pkt);
-		}
-
-		if (sendto(so, outbuf, answer_size, 0, &paddr, plen) == -1)
-			log_warn("spoofquery sendto");
-		else {
-			rv = 0;
-			if (verbose)
-				log_info("spoofquery: spoofing %s to %s",
-				    hostname, ipaddr ? ipaddr : "NXdomain");
-		}
-	}
+	/* reply to caller */
+	if (send_response(hostname, answer_pkt, id))
+		log_warnx("send_response failed");
 
 unwind:
 	if (answer_pkt)
@@ -470,40 +452,6 @@ unwind:
 		ldns_rr_list_free(answer_ns);
 	if (answer_ad)
 		ldns_rr_list_free(answer_ad);
-
-	return (rv);
-}
-
-int
-send_response(char *hostname, ldns_pkt *respkt, uint16_t id)
-{
-	size_t			answer_size;
-	ldns_status		status;
-	uint8_t			*outbuf = NULL;
-	int			rv = 1;
-
-	if (hostname == NULL || respkt == NULL) {
-		log_warnx("send_response: invalid parameters");
-		return (NULL);
-	}
-
-	ldns_pkt_set_id(respkt, id);
-	status = ldns_pkt2wire(&outbuf, respkt, &answer_size);
-	if (status != LDNS_STATUS_OK)
-		log_warnx("can't create answer: %s",
-		    ldns_get_errorstr_by_id(status));
-	else {
-		if (sendto(so, outbuf, answer_size, 0, &paddr, plen) == -1)
-			log_warn("send_response: sendto");
-		else {
-			rv = 0;
-			if (verbose)
-				log_info("send_response: resolved %s", hostname);
-		}
-	}
-
-	if (outbuf)
-		LDNS_FREE(outbuf);
 
 	return (rv);
 }
@@ -605,7 +553,10 @@ forwardquery(char *hostname, ldns_rr *query_rr, u_int16_t id)
 		log_warn("cannot fork"); /* we'll just do it in parent proc */
 		break;
 	case 0:
-		signal(SIGCHLD, SIG_DFL);
+		/* is this needed? */
+		signal_del(&evchild);
+		signal_del(&evusr1);
+		signal_del(&evhup);
 		child = 1;
 		break;
 	default:
@@ -747,8 +698,6 @@ setupresolver(void)
 
 	log_info("%s %s, serving: %s", action, resolv_conf,
 	    domainname ? domainname : "no local domain set");
-
-	newresolv = 0;
 }
 
 void
@@ -883,33 +832,6 @@ runregex(char *hostname)
 }
 
 void
-dosignals(int argc, char *argv[])
-{
-	if (newresolv)
-		setupresolver();
-	if (reread) {
-		rereadhosts(argc, argv);
-		setupregex();
-		reread = 0;
-	}
-}
-
-void
-installsignal(int sig, char *name)
-{
-	struct sigaction	sa;
-	char			msg[80];
-
-	sa.sa_handler = sighdlr;
-	sigemptyset(&sa.sa_mask);
-	sa.sa_flags = 0;
-	if (sigaction(sig, &sa, NULL) == -1) {
-		snprintf(msg, sizeof msg, "could not install %s handler", name);
-		fatal(msg);
-	}
-}
-
-void
 usage(void)
 {
 	fprintf(stderr,
@@ -918,27 +840,136 @@ usage(void)
 	exit(0);
 }
 
-int
-main(int argc, char *argv[])
+/* this is not in signal context so we can run stuff in here */
+void
+sighdlr(int sig, short flags, void *args)
 {
-	int			c;
-	ssize_t			nb;
+	pid_t			pid;
+	int			save_errno = errno, status;
+	struct ev_args		*a = args;
+
+	switch (sig) {
+	case SIGINT:
+	case SIGTERM:
+	case SIGQUIT:
+		event_loopexit(NULL);
+		break;
+	case SIGHUP:
+		setupresolver();
+		break;
+	case SIGCHLD:
+		while ((pid = waitpid(WAIT_ANY, &status, WNOHANG)) != 0) {
+			if (pid == -1) {
+				if (errno == EINTR)
+					continue;
+				if (errno != ECHILD) {
+					/* waitpid */
+				}
+				break;
+			}
+
+			if (WIFEXITED(status)) {
+				if (WEXITSTATUS(status) != 0) {
+					/* child exit status bad */
+				}
+			} else {
+				/* child is terminated abnormally */
+			}
+		}
+		break;
+	case SIGUSR1:
+		rereadhosts(a->argc, a->argv);
+		setupregex();
+		break;
+	}
+
+	errno = save_errno;
+}
+
+void
+event_main(int fd, short sig, void *args)
+{
 	uint8_t			inbuf[INBUF_SIZE];
 	u_int16_t		id;
+	ssize_t			nb;
 	ldns_status		status;
 	ldns_pkt		*query_pkt;
 	struct hostnode		hostn, *n = NULL, h;
 	ldns_rr			*query_rr;
+	char			*s;
+
+	nb = recvfrom(so, inbuf, INBUF_SIZE, 0, &paddr, &plen);
+	if (nb == -1) {
+		if (errno == EINTR || errno == EAGAIN)
+			return;
+		else
+			fatal("recvfrom");
+	}
+
+	status = ldns_wire2pkt(&query_pkt, inbuf, (size_t)nb);
+	if (status != LDNS_STATUS_OK) {
+		log_warnx("bad packet: %s",
+		    ldns_get_errorstr_by_id(status));
+		return;
+	} else
+		if (debug) {
+			log_debug("received packet:");
+			logpacket(query_pkt);
+		}
+
+	bzero(&hostn, sizeof hostn);
+	hostn.hostname = hostnamefrompkt(query_pkt, &query_rr);
+	id = ldns_pkt_id(query_pkt);
+	if (hostn.hostname == NULL || !strcmp(hostn.hostname, "")) {
+		/* if we have an invalid hostname forward it */
+		forwardquery(hostn.hostname, query_rr, id);
+	} else if (domainname &&
+	    (s = strstr(hostn.hostname, domainname)) != NULL) {
+		/*
+		 * if we are in our own domain strip it of and try
+		 * without domain name; this is to work around
+		 * software that tries to be smart about domain names
+		 */
+		if (asprintf(&h.hostname, "%s", hostn.hostname) == -1)
+			fatal("hostname");
+		h.hostname[s - hostn.hostname - 1] = '\0';
+		if (runregex(h.hostname) == 0)
+			spoofquery(&hostn, query_rr, id);
+		else if ((n = RB_FIND(hosttree, &hosthead, &h)) != NULL)
+			spoofquery(n, query_rr, id);
+		else
+			forwardquery(hostn.hostname, query_rr, id);
+		free(h.hostname);
+	} else {
+		/* not in our domain */
+		if (runregex(hostn.hostname) == 0)
+			spoofquery(&hostn, query_rr, id);
+		else if ((n = RB_FIND(hosttree, &hosthead, &hostn)) != NULL)
+			spoofquery(n, query_rr, id);
+		else
+			forwardquery(hostn.hostname, query_rr, id);
+	}
+
+	if (hostn.hostname)
+		free(hostn.hostname);
+	ldns_pkt_free(query_pkt);
+}
+
+int
+main(int argc, char *argv[])
+{
+	int			c;
 	char			*listen_addr = NULL;
 	u_int16_t		port = 53;
 	struct passwd		*pw;
 	struct stat		stb;
-	char			*user = ADSUCK_USER, *s;
+	char			*user = ADSUCK_USER;
 	char			*cdir = NULL;
 	int			foreground = 0, rcount = 0;
-	struct sigaction	sact;
+	struct ev_args		eva;
 
 	log_init(1);		/* log to stderr until daemonized */
+	event_init();
 
 	while ((c = getopt(argc, argv, "Dc:df:l:u:p:r:v")) != -1) {
 		switch (c) {
@@ -1020,20 +1051,6 @@ main(int argc, char *argv[])
 	    setresuid(pw->pw_uid, pw->pw_uid, pw->pw_uid))
 		fatal("can't drop privileges");
 
-	/* signaling */
-	bzero(&sact, sizeof(sact));
-	sigemptyset(&sact.sa_mask);
-	sact.sa_flags = 0;
-	sact.sa_handler = sighdlr;
-	sigaction(SIGINT, &sact, NULL);
-	sigaction(SIGQUIT, &sact, NULL);
-	sigaction(SIGTERM, &sact, NULL);
-	sigaction(SIGUSR1, &sact, NULL);
-	sigaction(SIGHUP, &sact, NULL);
-
-	sact.sa_flags = SA_NOCLDSTOP;
-	sigaction(SIGCHLD, &sact, NULL);
-
 	/* external resolver */
 	setupresolver();
 
@@ -1043,65 +1060,32 @@ main(int argc, char *argv[])
 	/* regex */
 	rcount = setupregex();
 
-	while (!stop) {
-		nb = recvfrom(so, inbuf, INBUF_SIZE, 0, &paddr, &plen);
-		if (nb == -1) {
-			if (errno == EINTR || errno == EAGAIN) {
-				dosignals(argc, argv);
-				continue;
-			} else
-				fatal("recvfrom");
-		}
-		dosignals(argc, argv);
+	/* setup events */
+	eva.argv = argv;
+	eva.argc = argc;
 
-		status = ldns_wire2pkt(&query_pkt, inbuf, (size_t)nb);
-		if (status != LDNS_STATUS_OK) {
-			log_warnx("bad packet: %s",
-			    ldns_get_errorstr_by_id(status));
-			continue;
-		} else
-			if (debug) {
-				log_debug("received packet:");
-				logpacket(query_pkt);
-			}
+	event_set(&evmain, so, EV_READ | EV_PERSIST, event_main, &eva);
+	event_add(&evmain, NULL);
 
-		bzero(&hostn, sizeof hostn);
-		hostn.hostname = hostnamefrompkt(query_pkt, &query_rr);
-		id = ldns_pkt_id(query_pkt);
-		if (hostn.hostname == NULL || !strcmp(hostn.hostname, "")) {
-			/* if we have an invalid hostname forward it */
-			forwardquery(hostn.hostname, query_rr, id);
-		} else if (domainname &&
-		    (s = strstr(hostn.hostname, domainname)) != NULL) {
-			/*
-			 * if we are in our own domain strip it of and try
-			 * without domain name; this is to work around
-			 * software that tries to be smart about domain names
-			 */
-			if (asprintf(&h.hostname, "%s", hostn.hostname) == -1)
-				fatal("hostname");
-			h.hostname[s - hostn.hostname - 1] = '\0';
-			if (runregex(h.hostname) == 0)
-				spoofquery(&hostn, query_rr, id);
-			else if ((n = RB_FIND(hosttree, &hosthead, &h)) != NULL)
-				spoofquery(n, query_rr, id);
-			else
-				forwardquery(hostn.hostname, query_rr, id);
-			free(h.hostname);
-		} else {
-			/* not in our domain */
-			if (runregex(hostn.hostname) == 0)
-				spoofquery(&hostn, query_rr, id);
-			else if ((n = RB_FIND(hosttree, &hosthead, &hostn)) != NULL)
-				spoofquery(n, query_rr, id);
-			else
-				forwardquery(hostn.hostname, query_rr, id);
-		}
+	signal_set(&evint, SIGINT, sighdlr, &eva);
+	signal_add(&evint, NULL);
 
-		if (hostn.hostname)
-			free(hostn.hostname);
-		ldns_pkt_free(query_pkt);
-	}
+	signal_set(&evquit, SIGQUIT, sighdlr, &eva);
+	signal_add(&evquit, NULL);
+
+	signal_set(&evterm, SIGTERM, sighdlr, &eva);
+	signal_add(&evterm, NULL);
+
+	signal_set(&evusr1, SIGUSR1, sighdlr, &eva);
+	signal_add(&evusr1, NULL);
+
+	signal_set(&evhup, SIGHUP, sighdlr, &eva);
+	signal_add(&evhup, NULL);
+
+	signal_set(&evchild, SIGCHLD, sighdlr, &eva);
+	signal_add(&evchild, NULL);
+
+	event_dispatch();
 
 	freeregex();
 	freerb();
