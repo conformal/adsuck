@@ -590,6 +590,9 @@ event_pipe(int fd, short sig, void *args)
 	size_t			rd;
 	ldns_pkt		*respkt = NULL;
 	char			*hostname = NULL;
+	time_t			expires = 0;
+	struct cachenode	*cachen;
+	ldns_rr			*query_rr;
 
 	if ((rd = read(fd, wire_pkt, sizeof wire_pkt)) == -1)
 		log_warn("can't read from pipe");
@@ -599,45 +602,38 @@ event_pipe(int fd, short sig, void *args)
 			goto done;
 		}
 
-		time_t			expires = 0;
-		struct cachenode	*cachen;
-		ldns_rr			*query_rr;
 
 		hostname = hostnamefrompkt(respkt, &query_rr);
 		if ((expires = get_ttl(hostname, respkt)) != 0) {
 			cachen = calloc(1, sizeof *cachen);
 			if (cachen == NULL) {
 				log_warn("no memory for cache record");
-				errx(1, "boom");
+				goto bad;
 			}
 
 			cachen->respkt = respkt;
-			respkt = NULL;
+			respkt = NULL; /* don't free it on the way out */
 			if (cachen->respkt == NULL) {
 				log_warn("no memory to cache packet");
-				free(cachen);
-				errx(1, "boom");
+				goto bad;
 			}
 
 			cachen->question = ldns_rr2str(query_rr);
 			if (cachen->question == NULL) {
 				log_warn("no memory to cache question");
-				ldns_pkt_free(cachen->respkt);
-				free(cachen);
-				errx(1, "boom");
+				goto bad;
 			}
 
 			cachen->expires = expires;
 			if (RB_INSERT(cachetree, &cachehead, cachen)) {
 				/* this shouldn't happen */
 				log_debug("already caching %s", hostname);
-				LDNS_FREE(cachen->question);
-				ldns_pkt_free(cachen->respkt);
-				free(cachen);
-			} else {
-				if (debug)
-					log_debug("caching %s", hostname);
+				goto bad;
 			}
+
+			/* we are caching this entry */
+			if (debug)
+				log_debug("caching %s", hostname);
 		}
 	}
 done:
@@ -649,6 +645,17 @@ done:
 
 	event_del(&a->ev);
 	free(a);
+
+	return;
+
+bad:
+	if (cachen) {
+		if (cachen->question)
+			LDNS_FREE(cachen->question);
+		if (cachen->respkt)
+			ldns_pkt_free(cachen->respkt);
+		free(cachen);
+	}
 }
 
 int
@@ -733,7 +740,8 @@ forwardquery(char *hostname, ldns_rr *query_rr, u_int16_t id)
 	respkt = ldns_resolver_query(resolver, qname, type, clas, qflags);
 	if (respkt == NULL) {
 		/* dns query failed so lets spoof it instead of timing out */
-		log_debug("forwardquery: query failed, spoofing response");
+		log_debug("forwardquery: query failed, spoofing response "
+		    "hostname %s", hostname);
 
 		hn.ipaddr = NULL;
 		hn.hostname = hostname;
