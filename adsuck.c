@@ -1145,7 +1145,6 @@ main(int argc, char *argv[])
 	struct ev_args		eva;
 
 	log_init(1);		/* log to stderr until daemonized */
-	event_init();
 
 	while ((c = getopt(argc, argv, "Dc:df:l:u:p:r:vV")) != -1) {
 		switch (c) {
@@ -1240,6 +1239,7 @@ main(int argc, char *argv[])
 	rcount = setupregex();
 
 	/* setup events */
+	event_init();
 	eva.argv = argv;
 	eva.argc = argc;
 
