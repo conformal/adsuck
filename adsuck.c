@@ -591,7 +591,7 @@ event_pipe(int fd, short sig, void *args)
 	ldns_pkt		*respkt = NULL;
 	char			*hostname = NULL;
 	time_t			expires = 0;
-	struct cachenode	*cachen;
+	struct cachenode	*cachen = NULL;
 	ldns_rr			*query_rr;
 
 	if ((rd = read(fd, wire_pkt, sizeof wire_pkt)) == -1)
@@ -634,7 +634,16 @@ event_pipe(int fd, short sig, void *args)
 			/* we are caching this entry */
 			if (debug)
 				log_debug("caching %s", hostname);
+			cachen = NULL; /* don't unwind cachen */
 		}
+	}
+bad:
+	if (cachen) {
+		if (cachen->question)
+			LDNS_FREE(cachen->question);
+		if (cachen->respkt)
+			ldns_pkt_free(cachen->respkt);
+		free(cachen);
 	}
 done:
 	if (respkt)
@@ -648,14 +657,6 @@ done:
 
 	return;
 
-bad:
-	if (cachen) {
-		if (cachen->question)
-			LDNS_FREE(cachen->question);
-		if (cachen->respkt)
-			ldns_pkt_free(cachen->respkt);
-		free(cachen);
-	}
 }
 
 int
