@@ -53,6 +53,7 @@
 #define ADSUCK_USER	"_adsuck"
 #define VERSION		"2.0"
 
+static char		*cvs = "$adsuck$";
 struct ev_args {
 	char		**argv;
 	int		argc;
@@ -987,7 +988,7 @@ void
 usage(void)
 {
 	fprintf(stderr,
-	    "%s [-Ddv] [-c directory] [-f resolv.conf] [-l listen] [-p port]\n"
+	    "%s [-DdVv] [-c directory] [-f resolv.conf] [-l listen] [-p port]\n"
 	    "       [-r regexfile] [-u user] hostsfile ...\n", __progname);
 	exit(0);
 }
@@ -1146,7 +1147,7 @@ main(int argc, char *argv[])
 	log_init(1);		/* log to stderr until daemonized */
 	event_init();
 
-	while ((c = getopt(argc, argv, "Dc:df:l:u:p:r:v")) != -1) {
+	while ((c = getopt(argc, argv, "Dc:df:l:u:p:r:vV")) != -1) {
 		switch (c) {
 		case 'D':
 			foreground = 1;
@@ -1172,6 +1173,9 @@ main(int argc, char *argv[])
 		case 'u':
 			user = optarg;
 			break;
+		case 'V':
+			fprintf(stderr, "version: %s cvs: %s\n", VERSION, cvs);
+			exit(0);
 		case 'v':
 			verbose = 1;
 			break;
