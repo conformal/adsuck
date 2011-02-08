@@ -64,6 +64,7 @@ struct event		evint;
 struct event		evquit;
 struct event		evterm;
 struct event		evusr1;
+struct event		evusr2;
 struct event		evhup;
 struct event		evchild;
 struct event		evclean;
@@ -85,6 +86,13 @@ ldns_resolver		*resolver;
 char			*resolv_conf;
 char			*domainname;
 char			*regexfile;
+
+/* stats */
+uint64_t		s_questions;
+uint64_t		s_answers;
+uint64_t		s_spoofed_answers;
+uint64_t		s_cached_questions;
+uint64_t		s_cached;
 
 extern char		*__progname;
 
@@ -452,6 +460,8 @@ spoofquery(struct hostnode *hn, ldns_rr *query_rr, u_int16_t id)
 	if (send_response(hostname, answer_pkt, id))
 		log_warnx("send_response failed");
 
+	s_spoofed_answers++;
+
 unwind:
 	if (answer_pkt)
 		ldns_pkt_free(answer_pkt);
@@ -499,6 +509,7 @@ check_cache(ldns_rr *query_rr, u_int16_t id)
 			RB_REMOVE(cachetree, &cachehead, c);
 			cachenode_unwind(c);
 			c = NULL;
+			s_cached--;
 			goto done;
 		}
 
@@ -602,7 +613,6 @@ event_pipe(int fd, short sig, void *args)
 			goto done;
 		}
 
-
 		hostname = hostnamefrompkt(respkt, &query_rr);
 		if ((expires = get_ttl(hostname, respkt)) != 0) {
 			cachen = calloc(1, sizeof *cachen);
@@ -630,6 +640,7 @@ event_pipe(int fd, short sig, void *args)
 				log_debug("already caching %s", hostname);
 				goto bad;
 			}
+			s_cached++;
 
 			/* we are caching this entry */
 			if (debug)
@@ -687,8 +698,11 @@ forwardquery(char *hostname, ldns_rr *query_rr, u_int16_t id)
 			log_warnx("can't create pipe");
 			goto unwind;
 		}
-	} else
+		s_answers++;
+	} else {
 		cached = 1;
+		s_cached_questions++;
+	}
 
 	switch (fork()) {
 	case -1:
@@ -1019,6 +1033,12 @@ sighdlr(int sig, short flags, void *args)
 		rereadhosts(a->argc, a->argv);
 		setupregex();
 		break;
+	case SIGUSR2:
+		log_info("DNS requests        : %llu", s_questions);
+		log_info("DNS uncached replies: %llu", s_answers);
+		log_info("DNS spoofed replies : %llu", s_spoofed_answers);
+		log_info("DNS cached replies  : %llu", s_cached_questions);
+		log_info("Cache entries       : %llu", s_cached);
 	}
 }
 
@@ -1033,6 +1053,7 @@ event_cleanup(int fd, short sig, void *args)
 			/* entry expired, purge it */
 			RB_REMOVE(cachetree, &cachehead, c);
 			cachenode_unwind(c);
+			s_cached--;
 		}
 	}
 
@@ -1070,6 +1091,7 @@ event_main(int fd, short sig, void *args)
 			logpacket(query_pkt);
 		}
 
+	s_questions++;
 	bzero(&hostn, sizeof hostn);
 	hostn.hostname = hostnamefrompkt(query_pkt, &query_rr);
 	id = ldns_pkt_id(query_pkt);
@@ -1231,6 +1253,9 @@ main(int argc, char *argv[])
 
 	signal_set(&evusr1, SIGUSR1, sighdlr, &eva);
 	signal_add(&evusr1, NULL);
+
+	signal_set(&evusr2, SIGUSR2, sighdlr, &eva);
+	signal_add(&evusr2, NULL);
 
 	signal_set(&evhup, SIGHUP, sighdlr, &eva);
 	signal_add(&evhup, NULL);
