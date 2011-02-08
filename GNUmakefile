@@ -3,7 +3,7 @@
 CFLAGS+= -O2 -Wall -ggdb -D_GNU_SOURCE -D_BSD_SOURCE -I.
 LDFLAGS+=
 
-LDADD+= -lldns
+LDADD+= -lldns -levent
 
 CC= gcc
 
