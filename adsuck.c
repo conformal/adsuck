@@ -29,6 +29,7 @@
 #include <arpa/inet.h>
 
 #include <sys/errno.h>
+#include <sys/time.h>
 #ifndef __linux__
 #include <sys/tree.h>
 #include <sys/queue.h>
@@ -65,6 +66,9 @@ struct event		evterm;
 struct event		evusr1;
 struct event		evhup;
 struct event		evchild;
+struct event		evclean;
+
+struct timeval		event_cleanup_to;
 
 int			entries;
 int			verbose;
@@ -83,6 +87,11 @@ char			*domainname;
 char			*regexfile;
 
 extern char		*__progname;
+
+struct ev_pipe_args {
+	struct event		ev;
+	int			fildes[2];
+};
 
 struct regexnode {
 	SIMPLEQ_ENTRY(regexnode)	rlink;
@@ -334,6 +343,10 @@ send_response(char *hostname, ldns_pkt *respkt, uint16_t id)
 		log_warnx("can't create answer: %s",
 		    ldns_get_errorstr_by_id(status));
 	else {
+		if (debug) {
+			log_debug("response packet:");
+			logpacket(respkt);
+		}
 		if (sendto(so, outbuf, answer_size, 0, &paddr, plen) == -1)
 			log_warn("send_response: sendto");
 		else {
@@ -456,6 +469,19 @@ unwind:
 	return (rv);
 }
 
+void
+cachenode_unwind(struct cachenode *c)
+{
+	if (c == NULL)
+		return;
+
+	if (c->question)
+		LDNS_FREE(c->question);
+	if (c->respkt)
+		ldns_pkt_free(c->respkt);
+	free(c);
+}
+
 struct cachenode *
 check_cache(ldns_rr *query_rr, u_int16_t id)
 {
@@ -471,9 +497,7 @@ check_cache(ldns_rr *query_rr, u_int16_t id)
 		if (c->expires - time(NULL) < 0) {
 			/* entry has expired */
 			RB_REMOVE(cachetree, &cachehead, c);
-			LDNS_FREE(c->question);
-			ldns_pkt_free(c->respkt);
-			free(c);
+			cachenode_unwind(c);
 			c = NULL;
 			goto done;
 		}
@@ -522,7 +546,30 @@ get_ttl(char *hostname, ldns_pkt *respkt)
 		if (!strcmp(hostname, ldns_buffer_begin(out))) {
 			/* this is the domain we were looking for */
 			expires = time(NULL) + ldns_rr_ttl(rr);
-			break;
+			goto done;
+		}
+		ldns_buffer_clear(out);
+	}
+
+	/*
+	 * since we found nothing in the answer section try authority section
+	 * this is needed for . question which webkit generates by the billions
+	 * all broswers are braindead generating infinite amounts of stupid dns
+	 * questions
+	 */
+	rrl = ldns_pkt_authority(respkt);
+	for (i = 0; i < ldns_rr_list_rr_count(rrl); i++) {
+		rr = ldns_rr_list_rr(rrl, i);
+		rdf = ldns_rr_owner(rr);
+		if (ldns_rdf2buffer_str_dname(out, rdf) != LDNS_STATUS_OK) {
+			log_warnx("can't get dname");
+			goto done;
+		}
+
+		if (!strcmp(hostname, ldns_buffer_begin(out))) {
+			/* this is the domain we were looking for */
+			expires = time(NULL) + ldns_rr_ttl(rr);
+			goto done;
 		}
 		ldns_buffer_clear(out);
 	}
@@ -538,7 +585,7 @@ done:
 void
 event_pipe(int fd, short sig, void *args)
 {
-	struct event		*ev = args;
+	struct ev_pipe_args	*a = args;
 	uint8_t			wire_pkt[LDNS_MAX_PACKETLEN];
 	size_t			rd;
 	ldns_pkt		*respkt = NULL;
@@ -547,12 +594,10 @@ event_pipe(int fd, short sig, void *args)
 	if ((rd = read(fd, wire_pkt, sizeof wire_pkt)) == -1)
 		log_warn("can't read from pipe");
 	else {
-		//fprintf(stderr, "rd %zd\n", rd);
 		if (ldns_wire2pkt(&respkt, wire_pkt, rd) != LDNS_STATUS_OK) {
 			log_warnx("can't convert wire packet to struct");
 			goto done;
 		}
-
 
 		time_t			expires = 0;
 		struct cachenode	*cachen;
@@ -594,10 +639,6 @@ event_pipe(int fd, short sig, void *args)
 					log_debug("caching %s", hostname);
 			}
 		}
-
-
-
-
 	}
 done:
 	if (respkt)
@@ -605,10 +646,9 @@ done:
 	if (hostname)
 		LDNS_FREE(hostname);
 	close(fd);
-	if (ev) {
-		event_del(ev);
-		free(ev);
-	}
+
+	event_del(&a->ev);
+	free(a);
 }
 
 int
@@ -622,17 +662,20 @@ forwardquery(char *hostname, ldns_rr *query_rr, u_int16_t id)
 	int			rv = 1, child = 0, childrv = 0;
 	struct hostnode		hn;
 	struct cachenode	*c;
-	int			*fildes = NULL;
+	struct ev_pipe_args	*a = NULL;
 	int			cached = 0;
+	uint8_t			*outbuf = NULL;
+	size_t			answer_size;
+	ldns_status		status;
 
 	c = check_cache(query_rr,  id);
 	if (c == NULL) {
-		fildes = malloc(sizeof(int[2]));
-		if (fildes == NULL) {
+		a = malloc(sizeof *a);
+		if (a == NULL) {
 			log_warnx("can't get memory for pipe");
 			goto unwind;
 		}
-		if (pipe(fildes) == -1) {
+		if (pipe(a->fildes) == -1) {
 			log_warnx("can't create pipe");
 			goto unwind;
 		}
@@ -650,8 +693,8 @@ forwardquery(char *hostname, ldns_rr *query_rr, u_int16_t id)
 		signal_del(&evhup);
 
 		/* close read end */
-		if (fildes)
-			close(fildes[0]);
+		if (a)
+			close(a->fildes[0]);
 		child = 1;
 		break;
 	default:
@@ -659,15 +702,11 @@ forwardquery(char *hostname, ldns_rr *query_rr, u_int16_t id)
 		if (cached)
 			return (0);
 
-		if (fildes)
-			close(fildes[1]);
-		struct event *evp = malloc(sizeof *evp);
-		if (evp == NULL) {
-			log_warn("no memory for parent event");
-			return (1);
-		}
-		event_set(evp, fildes[0], EV_READ | EV_PERSIST, event_pipe, evp);
-		event_add(evp, NULL);
+		if (a)
+			close(a->fildes[1]);
+		event_set(&a->ev, a->fildes[0], EV_READ | EV_PERSIST,
+		    event_pipe, a);
+		event_add(&a->ev, NULL);
 		return (0);
 	}
 
@@ -681,7 +720,8 @@ forwardquery(char *hostname, ldns_rr *query_rr, u_int16_t id)
 
 	qname = ldns_dname_new_frm_str(hostname);
 	if (!qname) {
-		log_debug("forwardquery: can't make qname, spoofing response");
+		log_debug("forwardquery: can't make qname, spoofing response "
+		    "for %s", hostname);
 
 		hn.ipaddr = NULL;
 		hn.hostname = hostname;
@@ -701,74 +741,33 @@ forwardquery(char *hostname, ldns_rr *query_rr, u_int16_t id)
 		goto unwind;
 	}
 
-	if (fildes) {
-		size_t			answer_size;
-		ldns_status		status;
-		uint8_t			*outbuf = NULL;
-
+	if (a) {
 		status = ldns_pkt2wire(&outbuf, respkt, &answer_size);
 		if (status != LDNS_STATUS_OK)
 			log_warnx("can't create answer: %s",
 			    ldns_get_errorstr_by_id(status));
 		else {
-			if (write(fildes[1], outbuf, answer_size) != answer_size) {
+			if (write(a->fildes[1], outbuf, answer_size) !=
+			     answer_size)
 				log_warn("can't write question to parent");
-				goto unwind;
-			}
 		}
-
-		if (outbuf)
-			LDNS_FREE(outbuf);
+		/* send reply regardless of results */
 	}
-#if 0
-	time_t			expires = 0;
-	struct cachenode	*cachen;
 
-	if ((expires = get_ttl(hostname, respkt)) != 0) {
-		cachen = calloc(1, sizeof *cachen);
-		if (cachen == NULL) {
-			log_warn("no memory for cache record");
-			goto unwind;
-		}
-
-		cachen->respkt = ldns_pkt_clone(respkt);
-		if (cachen->respkt == NULL) {
-			log_warn("no memory to cache packet");
-			free(cachen);
-			goto unwind;
-		}
-
-		cachen->question = ldns_rr2str(query_rr);
-		if (cachen->question == NULL) {
-			log_warn("no memory to cache question");
-			ldns_pkt_free(cachen->respkt);
-			free(cachen);
-			goto unwind;
-		}
-
-		cachen->expires = expires;
-		if (RB_INSERT(cachetree, &cachehead, cachen)) {
-			/* this shouldn't happen */
-			log_debug("already caching %s", hostname);
-			LDNS_FREE(cachen->question);
-			ldns_pkt_free(cachen->respkt);
-			free(cachen);
-		} else {
-			if (debug)
-				log_debug("caching %s", hostname);
-		}
-	}
-#endif
 	if (send_response(hostname, respkt, id))
 		log_warnx("send_reponse uncached");
 unwind:
+	if (outbuf)
+		LDNS_FREE(outbuf);
 	if (respkt)
 		ldns_pkt_free(respkt);
 	if (qname)
 		ldns_rdf_free(qname);
 exitchild:
-	if (fildes)
-		close(fildes[1]); /* close write end */
+	if (a) {
+		close(a->fildes[1]); /* close write end */
+		free(a);
+	}
 	if (child)
 		_exit(childrv);
 
@@ -1015,6 +1014,23 @@ sighdlr(int sig, short flags, void *args)
 }
 
 void
+event_cleanup(int fd, short sig, void *args)
+{
+	struct cachenode	*c, *next;
+
+	for (c = RB_MIN(cachetree, &cachehead); c != NULL; c = next) {
+		next = RB_NEXT(cachetree, &cachehead, c);
+		if (c->expires - time(NULL) < 0) {
+			/* entry expired, purge it */
+			RB_REMOVE(cachetree, &cachehead, c);
+			cachenode_unwind(c);
+		}
+	}
+
+	evtimer_add(&evclean, &event_cleanup_to);
+}
+
+void
 event_main(int fd, short sig, void *args)
 {
 	uint8_t			inbuf[INBUF_SIZE];
@@ -1212,6 +1228,10 @@ main(int argc, char *argv[])
 
 	signal_set(&evchild, SIGCHLD, sighdlr, &eva);
 	signal_add(&evchild, NULL);
+
+	event_cleanup_to.tv_sec = 60 * 60; /* every hour */
+	evtimer_set(&evclean, event_cleanup, NULL);
+	evtimer_add(&evclean, &event_cleanup_to);
 
 	event_dispatch();
 
