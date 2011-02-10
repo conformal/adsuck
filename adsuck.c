@@ -51,7 +51,7 @@
 #define INBUF_SIZE	(4096)
 #define LOCALIP		"127.0.0.1"
 #define ADSUCK_USER	"_adsuck"
-#define VERSION		"2.0"
+#define VERSION		"2.1"
 
 static char		*cvs = "$adsuck$";
 struct ev_args {
@@ -993,6 +993,23 @@ usage(void)
 	exit(0);
 }
 
+void
+purge_cache(void)
+{
+	struct cachenode	*c, *next;
+
+	for (c = RB_MIN(cachetree, &cachehead); c != NULL; c = next) {
+		next = RB_NEXT(cachetree, &cachehead, c);
+		RB_REMOVE(cachetree, &cachehead, c);
+		cachenode_unwind(c);
+		s_cached--;
+	}
+
+	if (RB_EMPTY(&cachehead))
+		log_info("cache purged");
+	else
+		log_warnx("cache wasn't completly purged");
+}
 /* this is not in signal context so we can run stuff in here */
 void
 sighdlr(int sig, short flags, void *args)
@@ -1009,6 +1026,7 @@ sighdlr(int sig, short flags, void *args)
 		break;
 	case SIGHUP:
 		setupresolver();
+		purge_cache();
 		break;
 	case SIGCHLD:
 		while ((pid = waitpid(WAIT_ANY, &status, WNOHANG)) != 0) {
@@ -1033,6 +1051,7 @@ sighdlr(int sig, short flags, void *args)
 	case SIGUSR1:
 		rereadhosts(a->argc, a->argv);
 		setupregex();
+		purge_cache();
 		break;
 	case SIGUSR2:
 		log_info("DNS requests        : %llu", s_questions);
