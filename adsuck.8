@@ -124,6 +124,12 @@ hostsfile.
 .It Pa resolv.conf
 Standard resolv.conf file that contain the actual resolving
 nameserver and options.
+.Pp
+Note: due to the way ldns works one can
+.Pa NOT
+specify a port in the
+.Pa resolv.conf
+file.
 .El
 .Sh SEE ALSO
 .Xr resolv.conf 5
