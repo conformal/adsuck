@@ -1,0 +1,15 @@
+#!/bin/sh
+#
+# $OpenBSD:$
+
+daemon="/usr/local/sbin/adsuck"
+daemon_user="_adsuck"
+
+. /etc/rc.d/rc.subr
+
+rc_reload() {
+        pkill -HUP -f "^${pexp}" && pkill -USR1 -f "^${pexp}"
+}
+
+rc_cmd $1
+
