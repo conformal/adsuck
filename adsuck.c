@@ -51,7 +51,7 @@
 #define INBUF_SIZE	(4096)
 #define LOCALIP		"127.0.0.1"
 #define ADSUCK_USER	"_adsuck"
-#define VERSION		"2.1"
+#define VERSION		"2.2"
 
 static char		*cvs = "$adsuck$";
 struct ev_args {
