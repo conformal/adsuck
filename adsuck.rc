@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# $OpenBSD:$
+# $adsuck$
 
 daemon="/usr/local/sbin/adsuck"
 daemon_user="_adsuck"
