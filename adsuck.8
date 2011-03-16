@@ -54,6 +54,19 @@ Note that when applications try to be smart
 and resolve an address with the local domain name appended,
 it will still spoof the answer.
 .Pp
+All non-spoofed responses are cached for the duration of the provided DNS TTL
+(Time To Live).
+The cache will be purged when
+.Nm
+receives a
+.Pa HUP
+or
+.Pa USR1
+signal.
+See the
+.Pa SIGNALS
+section for more details.
+.Pp
 The options are as follows:
 .Bl -tag -width Ds
 .It Fl c Ar directory
@@ -104,10 +117,18 @@ http://www.mvps.org/winhelp2002/
 .Ed
 .El
 .Pp
-Sending
+.Sh SIGNALS
+The
 .Nm
-a SIGHUP signal will cause it to reevaluate the resolv.conf file.
-A SIGUSR1 signal will cause it to reread all hostsfiles and regex file.
+daemon reacts to the following signals:
+.Bl -tag -width Ds -offset indent -compact
+.It Cm HUP
+reevaluate resolv.conf and purge cache
+.It Cm USR1
+reread hosts and regex files and purge cache
+.It Cm USR2
+output runtime stats using syslog
+.El
 .Sh FILES
 .Bl -tag -width "resolv.confXXX"
 .It Pa hostsfile
