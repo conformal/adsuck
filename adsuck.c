@@ -51,7 +51,7 @@
 #define INBUF_SIZE	(4096)
 #define LOCALIP		"127.0.0.1"
 #define ADSUCK_USER	"_adsuck"
-#define VERSION		"2.2"
+#define VERSION		"2.3"
 
 static char		*cvs = "$adsuck$";
 struct ev_args {
@@ -1119,10 +1119,11 @@ event_main(int fd, short sig, void *args)
 		/* if we have an invalid hostname forward it */
 		forwardquery(hostn.hostname, query_rr, id);
 	} else if (domainname &&
-	    (s = strstr(hostn.hostname, domainname)) != NULL) {
+	    (s = strstr(hostn.hostname, domainname)) != NULL &&
+	    s != hostn.hostname) {
 		/*
 		 * if we are in our own domain strip it of and try
-		 * without domain name; this is to work around
+		 * without the domain name; this is to work around
 		 * software that tries to be smart about domain names
 		 */
 		if (asprintf(&h.hostname, "%s", hostn.hostname) == -1)
@@ -1136,7 +1137,7 @@ event_main(int fd, short sig, void *args)
 			forwardquery(hostn.hostname, query_rr, id);
 		free(h.hostname);
 	} else {
-		/* not in our domain */
+		/* either exactly our search domain or not in our domain */
 		if (runregex(hostn.hostname) == 0)
 			spoofquery(&hostn, query_rr, id);
 		else if ((n = RB_FIND(hosttree, &hosthead, &hostn)) != NULL)
