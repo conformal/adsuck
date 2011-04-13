@@ -1,7 +1,5 @@
 #!/bin/sh
 
-# $adsuck$
-#
 # Copyright (c) 2011 Todd T. Fries <todd@fries.net>
 #
 # Permission to use, copy, modify, and distribute this software for any
@@ -17,6 +15,12 @@
 # OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 . /etc/rc.conf
+
+if [ "X$new_domain_name_servers" = "X" ]; then
+	unset new_domain_name_servers
+	unset new_domain_name
+	exec /sbin/dhclient-script "$@"
+fi
 
 if [ "$adsuck_flags" != "NO" -a -x /usr/local/sbin/adsuck ]; then
 	adsuck_resconf="/var/adsuck/files/resolv.conf"
