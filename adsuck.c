@@ -343,7 +343,7 @@ send_response(char *hostname, ldns_pkt *respkt, uint16_t id)
 
 	if (hostname == NULL || respkt == NULL) {
 		log_warnx("send_response: invalid parameters");
-		return (NULL);
+		return (0);
 	}
 
 	ldns_pkt_set_id(respkt, id);
