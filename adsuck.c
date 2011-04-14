@@ -81,6 +81,7 @@ int			debugsyslog;
 int			so;
 struct sockaddr		paddr;
 socklen_t		plen = (socklen_t)sizeof(paddr);
+char			*listen_addr = NULL;
 
 /* resolver */
 ldns_resolver		*resolver;
@@ -380,12 +381,13 @@ spoofquery(struct hostnode *hn, ldns_rr *query_rr, u_int16_t id)
 	ldns_rr_list		*answer_ad = NULL;
 	ldns_rr_list		*answer_qr = NULL;
 	ldns_pkt		*answer_pkt = NULL;
-	ldns_rr			*myrr = NULL, *myaurr = NULL;
+	ldns_rr			*myrr = NULL, *myaurr = NULL, *myasrr = NULL;
 	ldns_rdf		*prev = NULL;
 	char			buf[MAXLINE * 2];
 	uint8_t			*outbuf = NULL;
 	int			rv = 1;
 	char			*ipaddr = NULL, *hostname = NULL;
+	char			myname[1024];
 
 	if (hn) {
 		ipaddr = hn->ipaddr;
@@ -418,8 +420,12 @@ spoofquery(struct hostnode *hn, ldns_rr *query_rr, u_int16_t id)
 		prev = NULL;
 
 		/* ns */
-		snprintf(buf, sizeof buf, "%s\t%d\tIN\tNS\t127.0.0.1.",
-		    hostname, 259200);
+		if (gethostname(myname, sizeof myname)) {
+			fprintf(stderr, "can't get hostname\n");
+			goto unwind;
+		}
+		snprintf(buf, sizeof buf, "%s\t%d\tIN\tNS\t%s.",
+		    hostname, 259200, listen_addr ? myname : "localhost");
 		status = ldns_rr_new_frm_str(&myaurr, buf, 0, NULL, &prev);
 		if (status != LDNS_STATUS_OK) {
 			fprintf(stderr, "can't create authority section: %s\n",
@@ -441,6 +447,37 @@ spoofquery(struct hostnode *hn, ldns_rr *query_rr, u_int16_t id)
 	answer_ad = ldns_rr_list_new();
 	if (answer_ad == NULL)
 		goto unwind;
+	if (ipaddr) {
+		/* myname is filled in above */
+		snprintf(buf, sizeof buf, "%s\t%d\tIN\tA\t%s",
+		    listen_addr ? myname : "localhost",
+		    259200,
+		    listen_addr ? listen_addr : "127.0.0.1");
+		status = ldns_rr_new_frm_str(&myasrr, buf, 0, NULL, &prev);
+		if (status != LDNS_STATUS_OK) {
+			fprintf(stderr, "can't create additional section: %s\n",
+			    ldns_get_errorstr_by_id(status));
+			goto unwind;
+		}
+		ldns_rr_list_push_rr(answer_ad, myasrr);
+		ldns_rdf_deep_free(prev);
+		prev = NULL;
+
+		/* V6 */
+		snprintf(buf, sizeof buf, "%s\t%d\tIN\tAAAA\t%s",
+		    listen_addr ? myname : "localhost",
+		    259200,
+		    listen_addr ? listen_addr : "::1");
+		status = ldns_rr_new_frm_str(&myasrr, buf, 0, NULL, &prev);
+		if (status != LDNS_STATUS_OK) {
+			fprintf(stderr, "can't create additional section: %s\n",
+			    ldns_get_errorstr_by_id(status));
+			goto unwind;
+		}
+		ldns_rr_list_push_rr(answer_ad, myasrr);
+		ldns_rdf_deep_free(prev);
+		prev = NULL;
+	}
 
 	/* actual packet */
 	answer_pkt = ldns_pkt_new();
@@ -1155,7 +1192,6 @@ int
 main(int argc, char *argv[])
 {
 	int			c;
-	char			*listen_addr = NULL;
 	u_int16_t		port = 53;
 	struct passwd		*pw;
 	struct stat		stb;
