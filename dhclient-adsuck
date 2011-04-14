@@ -26,12 +26,11 @@ if [ "$adsuck_flags" != "NO" -a -x /usr/local/sbin/adsuck ]; then
 	adsuck_resconf="/var/adsuck/files/resolv.conf"
 
 	{
-		grep -v search $adsuck_resconf
+		egrep -v "search|nameserver" $adsuck_resconf
 		for search in $new_domain_name; do
 			echo "search $search"
 		done
 
-		grep -v nameserver $adsuck_resconf
 		for nameserver in $new_domain_name_servers; do
 			echo "nameserver $nameserver"
 		done
