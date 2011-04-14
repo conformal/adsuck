@@ -435,6 +435,21 @@ spoofquery(struct hostnode *hn, ldns_rr *query_rr, u_int16_t id)
 		ldns_rr_list_push_rr(answer_ns, myaurr);
 		ldns_rdf_deep_free(prev);
 		prev = NULL;
+	} else {
+		snprintf(buf, sizeof buf, "%s\t3600\tIN\tSOA\t%s root.%s %s",
+		    hostname,
+		    hostname,
+		    hostname,
+		    "2 3600 900 3600000 3600");
+		status = ldns_rr_new_frm_str(&myaurr, buf, 0, NULL, &prev);
+		if (status != LDNS_STATUS_OK) {
+			fprintf(stderr, "can't create authority section: %s\n",
+			    ldns_get_errorstr_by_id(status));
+			goto unwind;
+		}
+		ldns_rr_list_push_rr(answer_ns, myaurr);
+		ldns_rdf_deep_free(prev);
+		prev = NULL;
 	}
 
 	/* question section */
