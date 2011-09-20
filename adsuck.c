@@ -319,7 +319,7 @@ hostnamefrompkt(ldns_pkt *pkt, ldns_rr **qrr)
 		goto done;
 	}
 
-	ret = strdup(ldns_buffer_begin(out));
+	ret = strdup((char *)ldns_buffer_begin(out));
 	if (ret == NULL) {
 		log_warn("no memory for hostname");
 		goto done;
@@ -607,7 +607,7 @@ get_ttl(char *hostname, ldns_pkt *respkt)
 			goto done;
 		}
 
-		if (!strcmp(hostname, ldns_buffer_begin(out))) {
+		if (!strcmp(hostname, (char *)ldns_buffer_begin(out))) {
 			/* this is the domain we were looking for */
 			expires = time(NULL) + ldns_rr_ttl(rr);
 			goto done;
@@ -630,7 +630,7 @@ get_ttl(char *hostname, ldns_pkt *respkt)
 			goto done;
 		}
 
-		if (!strcmp(hostname, ldns_buffer_begin(out))) {
+		if (!strcmp(hostname, (char *)ldns_buffer_begin(out))) {
 			/* this is the domain we were looking for */
 			expires = time(NULL) + ldns_rr_ttl(rr);
 			goto done;
