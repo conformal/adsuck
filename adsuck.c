@@ -1,4 +1,3 @@
-/* $adsuck$ */
 /*
  * Copyright (c) 2009 Marco Peereboom <marco@peereboom.us>
  *
@@ -45,15 +44,14 @@
 #include <ldns/ldns.h>
 #include <event.h>
 
+#include "version.h"
 #include "adsuck.h"
 
 #define MAXLINE		(256)
 #define INBUF_SIZE	(4096)
 #define LOCALIP		"127.0.0.1"
 #define ADSUCK_USER	"_adsuck"
-#define VERSION		"2.3"
 
-static char		*cvs = "$adsuck$";
 struct ev_args {
 	char		**argv;
 	int		argc;
@@ -1244,7 +1242,7 @@ main(int argc, char *argv[])
 			user = optarg;
 			break;
 		case 'V':
-			fprintf(stderr, "version: %s cvs: %s\n", VERSION, cvs);
+			fprintf(stderr, "version: %s\n", ADSUCK_VERSION);
 			exit(0);
 		case 'v':
 			verbose = 1;
@@ -1280,7 +1278,7 @@ main(int argc, char *argv[])
 			fatal("daemon");
 	}
 
-	log_info("start V%s", VERSION);
+	log_info("start V%s", ADSUCK_VERSION);
 
 	/* chroot */
 	if (cdir == NULL)
