@@ -70,7 +70,6 @@ struct event		evclean;
 
 struct timeval		event_cleanup_to;
 
-int			entries;
 int			verbose;
 int			debug;
 int			debugsyslog;
@@ -93,6 +92,8 @@ uint64_t		s_answers;
 uint64_t		s_spoofed_answers;
 uint64_t		s_cached_questions;
 uint64_t		s_cached;
+uint64_t		s_blacklisted;
+uint64_t		s_regex;
 
 extern char		*__progname;
 
@@ -267,7 +268,7 @@ addhosts(char *filename)
 
 	if (verbose)
 		log_info("added entries: %d", newentry);
-	entries += newentry;
+	s_blacklisted += (uint64_t)newentry;
 	fclose(f);
 }
 
@@ -933,7 +934,7 @@ freerb(void)
 		nxt = RB_NEXT(hosttree, &hosthead, n);
 		RB_REMOVE(hosttree, &hosthead, n);
 		free(n);
-		entries--;
+		s_blacklisted--;
 	}
 	RB_INIT(&hosthead);
 }
@@ -953,17 +954,18 @@ rereadhosts(int argc, char *argv[])
 		argv++;
 	}
 
-	log_info("total entries: %d", entries);
+	log_info("total entries: %llu", s_blacklisted);
 
 	return (0);
 }
 
-int
+uint64_t
 setupregex(void)
 {
 	char			l[MAXLINE], er[MAXLINE * 2], *p;
 	FILE			*f;
-	int			i = 0, rv;
+	uint64_t		i = 0;
+	int			rv;
 	struct regexnode	*n;
 
 	freeregex();
@@ -1109,6 +1111,8 @@ sighdlr(int sig, short flags, void *args)
 		log_info("DNS spoofed replies : %llu", s_spoofed_answers);
 		log_info("DNS cached replies  : %llu", s_cached_questions);
 		log_info("Cache entries       : %llu", s_cached);
+		log_info("Blacklisted domains : %llu", s_blacklisted);
+		log_info("Regex entries       : %llu", s_regex);
 	}
 }
 
@@ -1210,7 +1214,7 @@ main(int argc, char *argv[])
 	struct stat		stb;
 	char			*user = ADSUCK_USER;
 	char			*cdir = NULL;
-	int			foreground = 0, rcount = 0;
+	int			foreground = 0;
 	struct ev_args		eva;
 
 	log_init(1);		/* log to stderr until daemonized */
@@ -1306,7 +1310,7 @@ main(int argc, char *argv[])
 	rereadhosts(argc, argv);
 
 	/* regex */
-	rcount = setupregex();
+	s_regex = setupregex();
 
 	/* setup events */
 	event_init();
