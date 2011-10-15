@@ -13,7 +13,7 @@ CFLAGS+= -I/usr/local/include
 LDFLAGS+= -L/usr/local/lib -lldns -levent
 BUILDVERSION != sh "${.CURDIR}/buildver.sh"
 .if !${BUILDVERSION} == ""
-CPPFLAGS+= -DXXXTERM_BUILDSTR=\"$(BUILDVERSION)\"
+CPPFLAGS+= -DADSUCK_BUILDSTR=\"$(BUILDVERSION)\"
 .endif
 
 # clang targets

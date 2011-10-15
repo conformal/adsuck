@@ -1242,7 +1242,8 @@ main(int argc, char *argv[])
 			user = optarg;
 			break;
 		case 'V':
-			fprintf(stderr, "version: %s\n", ADSUCK_VERSION);
+			fprintf(stderr, "version: %s build: %s\n",
+			    ADSUCK_VERSION, ADSUCK_BUILDSTR);
 			exit(0);
 		case 'v':
 			verbose = 1;
