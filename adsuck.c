@@ -257,7 +257,7 @@ addhosts(char *filename)
 		snprintf(hostn->hostname, strlen(host) + 2, "%s.", host);
 		if (ip) {
 			hostn->ipaddr = hostn->hostname + strlen(host) + 2;
-			strlcpy(hostn->ipaddr, ip, strlen(ip) + 1);
+			strlcpy(hostn->ipaddr, ip, len);
 		} else
 			hostn->ipaddr = NULL;
 		if (RB_INSERT(hosttree, &hosthead, hostn))
