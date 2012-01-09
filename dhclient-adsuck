@@ -16,7 +16,7 @@
 
 . /etc/rc.conf
 
-if [ "X$new_domain_name_servers" = "X" -o "X$new_domain_name" = "X" ]; then
+if [ "X$new_domain_name_servers" = "X" ]; then
 	unset new_domain_name_servers
 	unset new_domain_name
 	exec /sbin/dhclient-script "$@"
