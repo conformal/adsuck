@@ -7,6 +7,6 @@ hosts.small is distributed by:
 http://www.mvps.org/winhelp2002/
 
 hosts.yoyo is distributed by
-http://pgl.yoyo.org/adservers/serverlist.php?showintro=0;hostformat=hosts
+http://pgl.yoyo.org/adservers/serverlist.php?hostformat=hosts&showintro=1&startdate%5Bday%5D=&startdate%5Bmonth%5D=&startdate%5Byear%5D=&mimetype=plaintext
 
 See individual files for copyright notices.
