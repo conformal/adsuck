@@ -16,6 +16,17 @@ BUILDVERSION != sh "${.CURDIR}/buildver.sh"
 CPPFLAGS+= -DADSUCK_BUILDSTR=\"$(BUILDVERSION)\"
 .endif
 
+beforeinstall:
+	install -m 755 -d /var/adsuck/files
+	install -m 644 ${.CURDIR}/files/hosts.small /var/adsuck/files
+	install -m 644 ${.CURDIR}/files/hosts.yoyo /var/adsuck/files
+	install -m 644 ${.CURDIR}/files/Hosts.blc /var/adsuck/files
+	install -m 644 ${.CURDIR}/files/Hosts.mis /var/adsuck/files
+	install -m 644 ${.CURDIR}/files/Hosts.pub /var/adsuck/files
+	install -m 644 ${.CURDIR}/files/Hosts.rsk /var/adsuck/files
+	install -m 644 ${.CURDIR}/files/Hosts.sex /var/adsuck/files
+	install -m 644 ${.CURDIR}/files/Hosts.trc /var/adsuck/files
+
 # clang targets
 .if ${.TARGETS:M*analyze*}
 CC=clang
