@@ -7,7 +7,7 @@ MAN=adsuck.8
 
 SRCS= adsuck.c log.c
 COPT+= -O2
-DEBUG+= -ggdb3 
+DEBUG+= -g
 CFLAGS+= -Wall
 CFLAGS+= -I/usr/local/include
 LDFLAGS+= -L/usr/local/lib -lldns -levent

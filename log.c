@@ -23,6 +23,10 @@
 #include <syslog.h>
 #include <time.h>
 
+#if defined(__APPLE__) && defined(__MACH__) && !defined(__DARWIN__)
+#define DARWIN  1
+#endif
+
 #include "adsuck.h"
 
 int	 logdebug;

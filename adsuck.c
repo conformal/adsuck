@@ -29,13 +29,19 @@
 
 #include <sys/errno.h>
 #include <sys/time.h>
-#ifndef __linux__
-#include <sys/tree.h>
-#include <sys/queue.h>
-#else
+#if defined(__APPLE__) && defined(__MACH__) && !defined(__DARWIN__)
+#define DARWIN 1
+#include <sys/syslimits.h>
+#include "tree.h"
+#include "queue.h"
+#include "osx.h"
+#elif defined(__linux__)
 #include <linux/limits.h>
 #include "linux/tree.h"
 #include "linux/queue.h"
+#else
+#include <sys/tree.h>
+#include <sys/queue.h>
 #endif
 #include <sys/types.h>
 #include <sys/stat.h>
