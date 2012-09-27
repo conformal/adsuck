@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009 Marco Peereboom <marco@peereboom.us>
+ * Copyright (c) 2009 - 2012 Marco Peereboom <marco@peereboom.us>
  *
  * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
