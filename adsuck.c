@@ -48,7 +48,7 @@
 #include <sys/wait.h>
 
 #include <ldns/ldns.h>
-#include <event.h>
+#include <event2/event.h>
 
 #include "version.h"
 #include "adsuck.h"
@@ -64,15 +64,16 @@ struct ev_args {
 };
 
 /* event signals */
-struct event		evmain;
-struct event		evint;
-struct event		evquit;
-struct event		evterm;
-struct event		evusr1;
-struct event		evusr2;
-struct event		evhup;
-struct event		evchild;
-struct event		evclean;
+struct event_base	*base;
+struct event		*evmain;
+struct event		*evint;
+struct event		*evquit;
+struct event		*evterm;
+struct event		*evusr1;
+struct event		*evusr2;
+struct event		*evhup;
+struct event		*evchild;
+struct event		*evclean;
 
 struct timeval		event_cleanup_to;
 
@@ -104,7 +105,7 @@ uint64_t		s_regex;
 extern char		*__progname;
 
 struct ev_pipe_args {
-	struct event		ev;
+	struct event		*ev;
 	int			fildes[2];
 };
 
@@ -721,7 +722,7 @@ done:
 		LDNS_FREE(hostname);
 	close(fd);
 
-	event_del(&a->ev);
+	event_del(a->ev);
 	free(a);
 
 	return;
@@ -768,9 +769,9 @@ forwardquery(char *hostname, ldns_rr *query_rr, u_int16_t id)
 		break;
 	case 0:
 		/* is this needed? */
-		signal_del(&evchild);
-		signal_del(&evusr1);
-		signal_del(&evhup);
+		event_del(evchild);
+		event_del(evusr1);
+		event_del(evhup);
 
 		/* close read end */
 		if (a)
@@ -784,9 +785,9 @@ forwardquery(char *hostname, ldns_rr *query_rr, u_int16_t id)
 
 		if (a)
 			close(a->fildes[1]);
-		event_set(&a->ev, a->fildes[0], EV_READ | EV_PERSIST,
+		a->ev = event_new(base, a->fildes[0], EV_READ | EV_PERSIST,
 		    event_pipe, a);
-		event_add(&a->ev, NULL);
+		event_add(a->ev, NULL);
 		return (0);
 	}
 
@@ -1080,7 +1081,7 @@ sighdlr(int sig, short flags, void *args)
 	case SIGINT:
 	case SIGTERM:
 	case SIGQUIT:
-		event_loopexit(NULL);
+		event_base_loopexit(base, NULL);
 		break;
 	case SIGHUP:
 		setupresolver();
@@ -1137,7 +1138,7 @@ event_cleanup(int fd, short sig, void *args)
 		}
 	}
 
-	evtimer_add(&evclean, &event_cleanup_to);
+	evtimer_add(evclean, &event_cleanup_to);
 }
 
 void
@@ -1165,8 +1166,7 @@ event_main(int fd, short sig, void *args)
 		log_warnx("bad packet: %s",
 		    ldns_get_errorstr_by_id(status));
 		return;
-	} else
-		if (debug) {
+	} else if (debug) {
 			log_debug("received packet:");
 			logpacket(query_pkt);
 		}
@@ -1323,39 +1323,39 @@ main(int argc, char *argv[])
 	s_regex = setupregex();
 
 	/* setup events */
-	event_init();
+	base = event_base_new();
 	eva.argv = argv;
 	eva.argc = argc;
 
-	event_set(&evmain, so, EV_READ | EV_PERSIST, event_main, &eva);
-	event_add(&evmain, NULL);
+	evmain = event_new(base, so, EV_READ | EV_PERSIST, event_main, &eva);
+	event_add(evmain, NULL);
 
-	signal_set(&evint, SIGINT, sighdlr, &eva);
-	signal_add(&evint, NULL);
+	evint = event_new(base, SIGINT, EV_SIGNAL | EV_PERSIST, sighdlr, &eva);
+	event_add(evint, NULL);
 
-	signal_set(&evquit, SIGQUIT, sighdlr, &eva);
-	signal_add(&evquit, NULL);
+	evquit = event_new(base, SIGQUIT, EV_SIGNAL | EV_PERSIST, sighdlr, &eva);
+	event_add(evquit, NULL);
 
-	signal_set(&evterm, SIGTERM, sighdlr, &eva);
-	signal_add(&evterm, NULL);
+	evterm = event_new(base, SIGTERM, EV_SIGNAL | EV_PERSIST,  sighdlr, &eva);
+	event_add(evterm, NULL);
 
-	signal_set(&evusr1, SIGUSR1, sighdlr, &eva);
-	signal_add(&evusr1, NULL);
+	evusr1 = event_new(base, SIGUSR1, EV_SIGNAL | EV_PERSIST, sighdlr, &eva);
+	event_add(evusr1, NULL);
 
-	signal_set(&evusr2, SIGUSR2, sighdlr, &eva);
-	signal_add(&evusr2, NULL);
+	evusr2 = event_new(base, SIGUSR2, EV_SIGNAL | EV_PERSIST, sighdlr, &eva);
+	event_add(evusr2, NULL);
 
-	signal_set(&evhup, SIGHUP, sighdlr, &eva);
-	signal_add(&evhup, NULL);
+	evhup = event_new(base, SIGHUP, EV_SIGNAL | EV_PERSIST, sighdlr, &eva);
+	event_add(evhup, NULL);
 
-	signal_set(&evchild, SIGCHLD, sighdlr, &eva);
-	signal_add(&evchild, NULL);
+	evchild = event_new(base, SIGCHLD, EV_SIGNAL | EV_PERSIST, sighdlr, &eva);
+	event_add(evchild, NULL);
 
 	event_cleanup_to.tv_sec = 60 * 60; /* every hour */
-	evtimer_set(&evclean, event_cleanup, NULL);
-	evtimer_add(&evclean, &event_cleanup_to);
+	evclean = evtimer_new(base, event_cleanup, NULL);
+	evtimer_add(evclean, &event_cleanup_to);
 
-	event_dispatch();
+	event_base_dispatch(base);
 
 	freeregex();
 	freerb();
