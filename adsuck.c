@@ -1215,7 +1215,7 @@ int
 main(int argc, char *argv[])
 {
 	int			c;
-	u_int16_t		port = 53;
+	u_int16_t		port = 53, flags;
 	struct passwd		*pw;
 	struct stat		stb;
 	char			*user = ADSUCK_USER;
@@ -1327,30 +1327,34 @@ main(int argc, char *argv[])
 	eva.argv = argv;
 	eva.argc = argc;
 
+	/* main */
 	evmain = event_new(base, so, EV_READ | EV_PERSIST, event_main, &eva);
 	event_add(evmain, NULL);
 
-	evint = event_new(base, SIGINT, EV_SIGNAL | EV_PERSIST, sighdlr, &eva);
+	/* signals */
+	flags = EV_SIGNAL | EV_PERSIST;
+	evint = event_new(base, SIGINT, flags, sighdlr, &eva);
 	event_add(evint, NULL);
 
-	evquit = event_new(base, SIGQUIT, EV_SIGNAL | EV_PERSIST, sighdlr, &eva);
+	evquit = event_new(base, SIGQUIT, flags, sighdlr, &eva);
 	event_add(evquit, NULL);
 
-	evterm = event_new(base, SIGTERM, EV_SIGNAL | EV_PERSIST,  sighdlr, &eva);
+	evterm = event_new(base, SIGTERM, flags,  sighdlr, &eva);
 	event_add(evterm, NULL);
 
-	evusr1 = event_new(base, SIGUSR1, EV_SIGNAL | EV_PERSIST, sighdlr, &eva);
+	evusr1 = event_new(base, SIGUSR1, flags, sighdlr, &eva);
 	event_add(evusr1, NULL);
 
-	evusr2 = event_new(base, SIGUSR2, EV_SIGNAL | EV_PERSIST, sighdlr, &eva);
+	evusr2 = event_new(base, SIGUSR2, flags, sighdlr, &eva);
 	event_add(evusr2, NULL);
 
-	evhup = event_new(base, SIGHUP, EV_SIGNAL | EV_PERSIST, sighdlr, &eva);
+	evhup = event_new(base, SIGHUP, flags, sighdlr, &eva);
 	event_add(evhup, NULL);
 
-	evchild = event_new(base, SIGCHLD, EV_SIGNAL | EV_PERSIST, sighdlr, &eva);
+	evchild = event_new(base, SIGCHLD, flags, sighdlr, &eva);
 	event_add(evchild, NULL);
 
+	/* cache refresh */
 	event_cleanup_to.tv_sec = 60 * 60; /* every hour */
 	evclean = evtimer_new(base, event_cleanup, NULL);
 	evtimer_add(evclean, &event_cleanup_to);
