@@ -10,7 +10,7 @@ COPT+= -O2
 DEBUG+= -g
 CFLAGS+= -Wall
 CFLAGS+= -I/usr/local/include
-LDFLAGS+= -L/usr/local/lib -lldns -levent_core
+LDFLAGS+= -L/usr/local/lib -lldns -levent_extra -levent_core
 BUILDVERSION != sh "${.CURDIR}/buildver.sh"
 .if !${BUILDVERSION} == ""
 CPPFLAGS+= -DADSUCK_BUILDSTR=\"$(BUILDVERSION)\"
