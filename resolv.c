@@ -61,7 +61,7 @@ monitor_file(char *filename)
 
 	EV_SET(&change, f, EVFILT_VNODE,
 	    EV_ADD | EV_ENABLE | EV_ONESHOT,
-	    NOTE_DELETE | NOTE_EXTEND | NOTE_WRITE | NOTE_ATTRIB,
+	    NOTE_DELETE | NOTE_WRITE,
 	    0, 0);
 
 	for (;;) {
@@ -73,9 +73,7 @@ monitor_file(char *filename)
 				log_info("resolv file deleted");
 				break;
 			}
-			if (event.fflags & NOTE_EXTEND ||
-			    event.fflags & NOTE_WRITE ||
-			    event.fflags & NOTE_ATTRIB) {
+			if (event.fflags & NOTE_WRITE) {
 				log_info("%s modified", filename);
 				kill(getppid(), SIGHUP);
 			}
