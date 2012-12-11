@@ -28,7 +28,7 @@ monitor_fork(char *filename)
 void
 monitor_file(char *filename)
 {
-	char		er[256];
+	char		er[PATH_MAX];
 	int		f, kq, nev;
 	struct kevent	change;
 	struct kevent	event;
