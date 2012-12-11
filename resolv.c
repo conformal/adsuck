@@ -1,16 +1,30 @@
+#include <sys/types.h>
+#include <unistd.h>
+
+#if defined(__linux__)
+#else
 #include <stdio.h>
 #include <stdlib.h>
 #include <fcntl.h>
-#include <unistd.h>
 #include <signal.h>
 
-#include <sys/types.h>
 #include <sys/event.h>
 #include <sys/time.h>
 #include <sys/varargs.h>
 
 #include "adsuck.h"
+#endif
 
+#if defined(__linux__)
+pid_t
+monitor_fork(char *filename)
+{
+	/* require external stimuli */
+	return (-1);
+}
+
+#else
+/* this is too broad and should be tuned per OS */
 void
 monitor_file(char *filename)
 {
@@ -75,3 +89,4 @@ monitor_fork(char *filename)
 		return (pid);
 	}
 }
+#endif

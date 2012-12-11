@@ -7,9 +7,9 @@ LDFLAGS+=
 
 LDADD+= -lldns -levent
 
-CC= gcc
+CC?= cc
 
-adsuck: adsuck.o log.o linux/strlcpy.o
+adsuck: adsuck.o log.o linux/strlcpy.o resolv.o
 	$(CC) $(LDFLAGS) -o $@ $+ $(LDADD)
 
 clean:
