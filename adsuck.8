@@ -128,6 +128,12 @@ reread hosts and regex files and purge cache
 .It Cm USR2
 output runtime stats using syslog
 .El
+.Pp
+NOTE: when supported by the OS
+.Nm
+will monitor resolv.conf for changes and therefore alleviate the need for
+external stimuli via HUP.
+Currently only OS' with kqueue/kevent functionality support this.
 .Sh FILES
 .Bl -tag -width "resolv.confXXX"
 .It Pa hostsfile
