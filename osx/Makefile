@@ -7,7 +7,7 @@ LDFLAGS+=
 
 LDADD+= -lldns -levent
 
-CC= gcc
+CC?= cc
 
 all: links adsuck
 
@@ -18,8 +18,9 @@ links:
 	ln -sf ../adsuck.h
 	ln -sf ../log.c
 	ln -sf ../version.h
+	ln -sf ../resolv.c
 
-adsuck: adsuck.o log.o osx.o
+adsuck: adsuck.o log.o resolv.o osx.o
 	$(CC) $(LDFLAGS) -o $@ $+ $(LDADD)
 
 clean:
