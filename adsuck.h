@@ -26,3 +26,7 @@ void		 log_info(const char *, ...);
 void		 log_debug(const char *, ...);
 void		 fatal(const char *);
 void		 fatalx(const char *);
+
+/* resolv.c */
+pid_t		monitor_fork(char *);
+

@@ -5,7 +5,7 @@ MANDIR= ${PREFIX}/man/man
 PROG=adsuck
 MAN=adsuck.8
 
-SRCS= adsuck.c log.c
+SRCS= adsuck.c log.c resolv.c
 COPT+= -O2
 DEBUG+= -g
 CFLAGS+= -Wall

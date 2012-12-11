@@ -1316,6 +1316,10 @@ main(int argc, char *argv[])
 	/* external resolver */
 	setupresolver();
 
+	/* monitor resolver if possible */
+	if (monitor_fork(resolv_conf) == -1)
+		log_info("can't monitor %s for changes", resolv_conf);
+
 	/* blacklists */
 	rereadhosts(argc, argv);
 
